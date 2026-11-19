@@ -20,9 +20,9 @@ Developers: `python -m pytest -q` runs the tests; the API docs are at http://127
 
 ## How domain verification works
 
-1. `POST /verify/start {"domain": "yourcompany.nl"}` returns a token like `aegis-verify=3f9a…`.
+1. Add the domain in the dashboard (or `POST /api/domains {"domain": "yourcompany.nl"}`). You get a token like `aegis-verify=3f9a…`.
 2. Add it as a **TXT record** on the domain at your DNS provider.
-3. `POST /verify/check {"domain": "yourcompany.nl"}` returns `verified: true` once the record is visible.
+3. Press **Check verification** (or `POST /api/domains/yourcompany.nl/verify`). Once the record is visible, the domain is verified and **Run scan** unlocks.
 
 Only someone who controls the domain's DNS can add that record. That is the
 legal boundary: unauthorised scanning is a criminal offence in the EU
