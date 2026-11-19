@@ -1,8 +1,8 @@
 import pytest
-from fastapi.testclient import TestClient
 
-import app.main as main
-from app.verification import InvalidDomain, VerificationService, normalize_domain
+from app.db import Store
+from app.verification import (InvalidDomain, NotVerified, VerificationService,
+                              normalize_domain, record_value)
 
 
 class FakeDNS:
@@ -15,63 +15,61 @@ class FakeDNS:
         return self.records.get(domain, [])
 
 
+@pytest.fixture
+def dns():
+    return FakeDNS()
+
+
+@pytest.fixture
+def svc(dns, tmp_path):
+    return VerificationService(Store(str(tmp_path / "t.db")), txt_lookup=dns)
+
+
 @pytest.mark.parametrize("raw,expected", [
     ("example.nl", "example.nl"),
     ("  WWW.Example.NL  ", "www.example.nl"),
     ("https://shop.example.de/login?x=1", "shop.example.de"),
     ("example.com.", "example.com"),
     ("example.com:8443", "example.com"),
+    ("LOCALHOST", "localhost"),
 ])
 def test_normalize_ok(raw, expected):
     assert normalize_domain(raw) == expected
 
 
-@pytest.mark.parametrize("raw", ["", "localhost", "-bad.com", "a..b.com", "10.0.0.1", "no spaces.com"])
+@pytest.mark.parametrize("raw", ["", "-bad.com", "a..b.com", "10.0.0.1", "no spaces.com", "intranet"])
 def test_normalize_rejects(raw):
     with pytest.raises(InvalidDomain):
         normalize_domain(raw)
 
 
-def test_token_must_be_in_dns():
-    dns = FakeDNS()
-    svc = VerificationService(txt_lookup=dns)
-    ch = svc.start("devries-logistics.nl")
-    assert not svc.check("devries-logistics.nl").verified
+def test_token_must_be_in_dns(svc, dns):
+    row = svc.start("devries-logistics.nl")
+    assert not svc.check("devries-logistics.nl")["verified_at"]
 
     dns.records["devries-logistics.nl"] = ["v=spf1 -all", "aegis-verify=wrongtoken"]
-    assert not svc.check("devries-logistics.nl").verified
+    assert not svc.check("devries-logistics.nl")["verified_at"]
 
-    dns.records["devries-logistics.nl"].append(ch.record_value)
-    assert svc.check("devries-logistics.nl").verified
-    assert svc.is_verified("DEVRIES-LOGISTICS.NL")
-
-
-def test_start_twice_keeps_same_token():
-    svc = VerificationService(txt_lookup=FakeDNS())
-    assert svc.start("a.nl").token == svc.start("a.nl").token
+    dns.records["devries-logistics.nl"].append(record_value(row["token"]))
+    assert svc.check("devries-logistics.nl")["verified_at"]
+    assert svc.require_verified("DEVRIES-LOGISTICS.NL") == "devries-logistics.nl"
 
 
-def test_tokens_are_unique_per_domain():
-    svc = VerificationService(txt_lookup=FakeDNS())
-    assert svc.start("a.nl").token != svc.start("b.nl").token
+def test_unverified_cannot_be_scanned(svc):
+    svc.start("a.nl")
+    with pytest.raises(NotVerified):
+        svc.require_verified("a.nl")
+    with pytest.raises(NotVerified):
+        svc.require_verified("never-added.nl")
 
 
-def test_api_flow(monkeypatch):
-    dns = FakeDNS()
-    monkeypatch.setattr(main, "service", VerificationService(txt_lookup=dns))
-    client = TestClient(main.app)
-
-    r = client.post("/verify/start", json={"domain": "devries-logistics.nl"})
-    assert r.status_code == 200
-    value = r.json()["record_value"]
-    assert value.startswith("aegis-verify=")
-
-    assert client.post("/verify/check", json={"domain": "devries-logistics.nl"}).json()["verified"] is False
-    dns.records["devries-logistics.nl"] = [value]
-    assert client.post("/verify/check", json={"domain": "devries-logistics.nl"}).json()["verified"] is True
+def test_localhost_is_auto_verified(svc):
+    assert svc.start("localhost")["verified_at"]
 
 
-def test_api_errors():
-    client = TestClient(main.app)
-    assert client.post("/verify/start", json={"domain": "not a domain"}).status_code == 422
-    assert client.post("/verify/check", json={"domain": "never-started.nl"}).status_code == 404
+def test_start_twice_keeps_same_token(svc):
+    assert svc.start("a.nl")["token"] == svc.start("a.nl")["token"]
+
+
+def test_tokens_are_unique(svc):
+    assert svc.start("a.nl")["token"] != svc.start("b.nl")["token"]

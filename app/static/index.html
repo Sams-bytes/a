@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aegis Console</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="logo">◆</span> Aegis <small>attack-surface monitor</small></div>
+  <button id="theme" class="ghost" title="Light / dark">◐</button>
+</header>
+
+<main class="layout">
+  <aside class="side">
+    <h2>Your domains</h2>
+    <form id="add-form" class="add">
+      <input id="add-input" placeholder="yourcompany.nl  or  localhost" autocomplete="off" required>
+      <button type="submit">Add</button>
+    </form>
+    <p class="hint">Tip: add <code>localhost</code> to practise on your own computer.</p>
+    <ul id="domain-list" class="domains"></ul>
+  </aside>
+
+  <section id="detail" class="detail">
+    <div class="empty">
+      <h1>Welcome to Aegis</h1>
+      <p>Add a domain on the left. You prove you own it with a DNS record, then Aegis checks what the internet can see: open ports, encryption and web settings. You get a score and a plain-English list of what to fix.</p>
+      <ol class="steps">
+        <li><b>Add</b> your domain</li>
+        <li><b>Verify</b> it with a DNS TXT record</li>
+        <li><b>Scan</b> it and fix the findings, worst first</li>
+      </ol>
+      <p class="legal">Aegis only scans domains you have verified. Scanning systems you don't own without permission is a crime in the EU.</p>
+    </div>
+  </section>
+</main>
+
+<template id="tpl-unverified">
+  <div class="card">
+    <h1 class="dname"></h1>
+    <span class="badge warn">Not verified</span>
+    <p>To prove you own this domain, add this record at your DNS provider (TransIP, Strato, Cloudflare, GoDaddy…):</p>
+    <table class="dns">
+      <tr><th>Type</th><td>TXT</td></tr>
+      <tr><th>Name / host</th><td class="rname"></td></tr>
+      <tr><th>Value</th><td><code class="rvalue"></code> <button class="ghost small copy">Copy</button></td></tr>
+    </table>
+    <p class="hint">DNS changes can take a few minutes to appear. Then press Check.</p>
+    <div class="row">
+      <button class="check">Check verification</button>
+      <button class="ghost danger remove">Remove domain</button>
+    </div>
+    <p class="msg"></p>
+  </div>
+</template>
+
+<template id="tpl-verified">
+  <div class="card head">
+    <div>
+      <h1 class="dname"></h1>
+      <span class="badge ok">Verified</span>
+    </div>
+    <div class="row">
+      <button class="scan">Run scan</button>
+      <button class="ghost danger remove">Remove</button>
+    </div>
+  </div>
+  <div class="scanning hidden"><div class="spinner"></div><span>Scanning… resolving DNS, probing ports, checking TLS. This takes 5–20 seconds.</span></div>
+  <div class="results"></div>
+  <div class="history"></div>
+</template>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -9,107 +9,97 @@ the customer proves ownership the same way Google Search Console does:
   2. They add a DNS TXT record:  aegis-verify=<token>
   3. We look up the domain's TXT records. If the token is there, only someone
      controlling the domain's DNS could have put it there -> verified.
+
+Exception: "localhost" (your own computer) is always allowed, so you can
+practise on your own machine.
 """
 
 from __future__ import annotations
 
 import re
 import secrets
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Callable, Iterable
 
 import dns.exception
 import dns.resolver
 
-TOKEN_PREFIX = "aegis-verify="
+from app.db import Store
 
-# Letters, digits, hyphens; labels separated by dots; must end in a TLD.
-_DOMAIN_RE = re.compile(
-    r"^(?=.{1,253}$)(?!-)([a-z0-9-]{1,63}(?<!-)\.)+[a-z]{2,63}$"
-)
+TOKEN_PREFIX = "aegis-verify="
+SELF_TEST_HOSTS = {"localhost"}
+
+_DOMAIN_RE = re.compile(r"^(?=.{1,253}$)(?!-)([a-z0-9-]{1,63}(?<!-)\.)+[a-z]{2,63}$")
 
 
 class InvalidDomain(ValueError):
     pass
 
 
+class NotVerified(PermissionError):
+    pass
+
+
 def normalize_domain(raw: str) -> str:
     """Turn user input like 'https://WWW.Example.nl/path' into 'www.example.nl'."""
     d = raw.strip().lower()
-    d = re.sub(r"^[a-z]+://", "", d)  # drop scheme
-    d = d.split("/")[0].split(":")[0]  # drop path and port
-    d = d.rstrip(".")
+    d = re.sub(r"^[a-z]+://", "", d)
+    d = d.split("/")[0].split(":")[0].rstrip(".")
+    if d in SELF_TEST_HOSTS:
+        return d
     if not _DOMAIN_RE.match(d):
         raise InvalidDomain(f"'{raw}' is not a valid domain name")
     return d
 
 
 def new_token() -> str:
-    """32 random hex characters (128 bits). Impossible to guess."""
-    return secrets.token_hex(16)
+    return secrets.token_hex(16)  # 128 random bits - impossible to guess
 
 
 def lookup_txt(domain: str) -> list[str]:
-    """Return all TXT record strings for a domain ([] if none / not found)."""
+    """All TXT record strings for a domain ([] if none or DNS unreachable)."""
     try:
         answers = dns.resolver.resolve(domain, "TXT", lifetime=5)
     except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.exception.Timeout,
             dns.resolver.NoNameservers):
         return []
-    out = []
-    for rdata in answers:
-        # A TXT record can be split into several <=255-byte chunks; join them.
-        out.append(b"".join(rdata.strings).decode("utf-8", errors="replace"))
-    return out
+    return [b"".join(r.strings).decode("utf-8", errors="replace") for r in answers]
 
 
-@dataclass
-class Challenge:
-    domain: str
-    token: str
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    verified_at: datetime | None = None
-
-    @property
-    def record_value(self) -> str:
-        return f"{TOKEN_PREFIX}{self.token}"
-
-    @property
-    def verified(self) -> bool:
-        return self.verified_at is not None
+def record_value(token: str) -> str:
+    return f"{TOKEN_PREFIX}{token}"
 
 
 class VerificationService:
-    """Keeps challenges in memory. (A database replaces this later.)
-
-    `txt_lookup` is injectable so tests can fake DNS without the internet.
-    """
-
-    def __init__(self, txt_lookup: Callable[[str], Iterable[str]] = lookup_txt):
+    def __init__(self, store: Store, txt_lookup: Callable[[str], Iterable[str]] = lookup_txt):
+        self.store = store
         self._lookup = txt_lookup
-        self._challenges: dict[str, Challenge] = {}
 
-    def start(self, raw_domain: str) -> Challenge:
+    def start(self, raw_domain: str) -> dict:
         domain = normalize_domain(raw_domain)
-        existing = self._challenges.get(domain)
-        if existing and not existing.verified:
-            return existing  # same token if they ask twice, so instructions stay valid
-        ch = Challenge(domain=domain, token=new_token())
-        self._challenges[domain] = ch
-        return ch
+        existing = self.store.get_domain(domain)
+        if existing:
+            return existing  # same token if asked twice, so instructions stay valid
+        row = self.store.add_domain(domain, new_token())
+        if domain in SELF_TEST_HOSTS:
+            self.store.mark_verified(domain)
+            row = self.store.get_domain(domain)
+        return row
 
-    def check(self, raw_domain: str) -> Challenge:
+    def check(self, raw_domain: str) -> dict:
         domain = normalize_domain(raw_domain)
-        ch = self._challenges.get(domain)
-        if ch is None:
+        row = self.store.get_domain(domain)
+        if row is None:
             raise KeyError(domain)
-        if not ch.verified:
+        if not row["verified_at"]:
             records = [r.strip() for r in self._lookup(domain)]
-            if ch.record_value in records:
-                ch.verified_at = datetime.now(timezone.utc)
-        return ch
+            if record_value(row["token"]) in records:
+                self.store.mark_verified(domain)
+                row = self.store.get_domain(domain)
+        return row
 
-    def is_verified(self, raw_domain: str) -> bool:
-        ch = self._challenges.get(normalize_domain(raw_domain))
-        return bool(ch and ch.verified)
+    def require_verified(self, raw_domain: str) -> str:
+        domain = normalize_domain(raw_domain)
+        row = self.store.get_domain(domain)
+        if not row or not row["verified_at"]:
+            raise NotVerified(domain)
+        return domain
