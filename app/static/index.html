@@ -14,6 +14,7 @@
 
 <main class="layout">
   <aside class="side">
+    <div id="alerts" class="alerts"></div>
     <h2>Your domains</h2>
     <form id="add-form" class="add">
       <input id="add-input" placeholder="yourcompany.nl  or  localhost" autocomplete="off" required>
@@ -66,6 +67,11 @@
       <button class="scan">Run scan</button>
       <button class="ghost danger remove">Remove</button>
     </div>
+  </div>
+  <div class="card monitor">
+    <label class="switch"><input type="checkbox" class="mon-toggle"> <b>Weekly monitoring</b></label>
+    <span class="mon-info hint"></span>
+    <button class="ghost small run-now" title="Do the automatic check right now instead of waiting">Run automatic check now</button>
   </div>
   <div class="scanning hidden"><div class="spinner"></div><span>Scanning… resolving DNS, probing ports, checking TLS. This takes 5–20 seconds.</span></div>
   <div class="results"></div>

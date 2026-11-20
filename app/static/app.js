@@ -88,7 +88,74 @@ async function renderVerified(root, d) {
   $(".dname", root).textContent = d.domain;
   $(".remove", root).onclick = () => removeDomain(d.domain);
   $(".scan", root).onclick = (e) => runScan(d.domain, e.target);
+  renderMonitor(root, d);
   await renderHistory(d.domain, true);
+}
+
+// ---------- weekly monitoring ----------
+const when = (iso) => {
+  const days = (new Date(iso) - Date.now()) / 86400000;
+  if (days <= 0) return "due now";
+  if (days < 1) return `in ${Math.max(1, Math.round(days * 24))} hours`;
+  return `in ${Math.round(days)} days (${new Date(iso).toLocaleDateString()})`;
+};
+
+function renderMonitor(root, d) {
+  const toggle = $(".mon-toggle", root), info = $(".mon-info", root);
+  toggle.checked = d.monitor;
+  info.textContent = !d.monitor ? "Off: Aegis only scans when you press Run scan."
+    : d.next_scan_due ? `Next automatic scan ${when(d.next_scan_due)}. You get an alert if something new opens up.`
+    : "First automatic scan within 15 minutes.";
+  toggle.onchange = async () => {
+    await api("PATCH", `/api/domains/${encodeURIComponent(d.domain)}`, { monitor: toggle.checked });
+    select(d.domain);
+  };
+  $(".run-now", root).onclick = async (e) => {
+    e.target.disabled = true;
+    $(".scanning").classList.remove("hidden");
+    try {
+      await api("POST", "/api/monitor/run-now");
+      await loadAlerts();
+      await select(d.domain);
+    } catch (err) { alert(err.message); }
+    $(".scanning")?.classList.add("hidden");
+    e.target.disabled = false;
+  };
+}
+
+// ---------- alerts ----------
+async function loadAlerts() {
+  const alerts = await api("GET", "/api/alerts");
+  const unseen = alerts.filter((a) => !a.seen_at);
+  const box = $("#alerts");
+  if (!unseen.length) { box.innerHTML = ""; return; }
+  box.innerHTML = `<h2>🔔 ${unseen.length} new alert${unseen.length > 1 ? "s" : ""}</h2>
+    ${unseen.map((a) => `
+      <div class="alert ${a.level}" data-d="${esc(a.domain)}" data-scan="${a.scan_id ?? ""}">
+        <b>${esc(a.title)}</b>
+        <ul>${a.details.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>
+        <span class="hint">${new Date(a.created_at).toLocaleString()} · click to open</span>
+      </div>`).join("")}`;
+  box.querySelectorAll(".alert").forEach((el) => el.onclick = async () => {
+    await api("POST", `/api/alerts/seen?domain=${encodeURIComponent(el.dataset.d)}`);
+    await select(el.dataset.d);
+    if (el.dataset.scan) renderResult(await api("GET", `/api/scans/${el.dataset.scan}`));
+    loadAlerts();
+  });
+}
+
+function renderChanges(ch) {
+  if (!ch || ch.first_scan) return "";
+  const rows = [
+    ...ch.new_ports.map((p) => `<li class="bad">New open port <b>${p.port}</b> (${esc(p.service)})</li>`),
+    ...ch.new_findings.map((f) => `<li class="${f.severity === "info" ? "" : "bad"}">New finding: ${esc(f.title)}</li>`),
+    ...ch.closed_ports.map((p) => `<li class="good">Closed: port <b>${p.port}</b> (${esc(p.service)})</li>`),
+    ...ch.fixed_findings.map((f) => `<li class="good">Fixed: ${esc(f.title)}</li>`),
+  ];
+  const delta = ch.score_after - ch.score_before;
+  return `<div class="card changes"><h3>What changed since the previous scan</h3>
+    ${rows.length ? `<ul>${rows.join("")}</ul>` : `<p class="hint">Nothing changed. That's what you want to see.</p>`}
+    <p>Score ${ch.score_before} → <b>${ch.score_after}</b>${delta ? ` (<span class="${delta < 0 ? "bad" : "good"}">${delta > 0 ? "+" : ""}${delta}</span>)` : ""}</p></div>`;
 }
 
 async function runScan(domain, btn) {
@@ -118,6 +185,7 @@ async function renderHistory(domain, showLatest) {
   }
   box.innerHTML = `<h3>Scan history</h3><ul>${scans.map((s) => `
     <li><a data-id="${s.id}">${new Date(s.finished_at).toLocaleString()}</a>
+    ${s.source === "scheduled" ? `<span class="tag">automatic</span>` : ""}
     <b style="color:${scoreColor(s.score)}">${s.score}/100</b></li>`).join("")}</ul>`;
   box.querySelectorAll("a[data-id]").forEach((a) => a.onclick = async () => renderResult(await api("GET", `/api/scans/${a.dataset.id}`)));
   if (showLatest) renderResult(await api("GET", `/api/scans/${scans[0].id}`));
@@ -150,6 +218,7 @@ function renderResult(scan) {
       </div>
     </div>
     ${r.error ? `<div class="card" style="color:var(--crit)">${esc(r.error)}</div>` : ""}
+    ${renderChanges(r.changes)}
     ${r.local ? `<div class="card local-note"><b>Local scan: you are looking from the inside.</b>
       This shows which programs are running on this computer, not what the internet can reach.
       Your firewall decides that. Open ports here are shown as <i>info</i>, with how serious
@@ -178,3 +247,5 @@ async function removeDomain(domain) {
 }
 
 loadDomains().then(() => { if (domains[0]) select(domains[0].domain); });
+loadAlerts();
+setInterval(() => loadAlerts().catch(() => {}), 60000); // pick up alerts from automatic scans
