@@ -28,6 +28,22 @@ Only someone who controls the domain's DNS can add that record. That is the
 legal boundary: unauthorised scanning is a criminal offence in the EU
 (NL Sr. art. 138ab, DE StGB §202c).
 
+## Weekly monitoring
+
+Every verified domain is re-scanned automatically every 7 days (switch it off per
+domain in the dashboard). Each scan is compared with the previous one. If a port
+opened, a new finding appeared or the score dropped, you get an alert in the
+dashboard. The **What changed** card shows the details.
+
+- **Ownership is re-checked before every automatic scan.** If the `aegis-verify`
+  TXT record has gone, Aegis does not scan, marks the domain unverified and raises
+  an alert. If DNS is simply unreachable (offline), it skips and tries again later.
+- The scheduler runs inside the Aegis server, so it only runs while Aegis is
+  running. It checks at startup, so overdue scans catch up straight away.
+- Settings: `AEGIS_SCAN_INTERVAL_HOURS` (default 168), `AEGIS_SCHEDULER=0` to turn it off.
+- Try it: run `.venv\Scripts\python tools\fake_service.py 5432` (a fake database on
+  your own computer), then press **Run automatic check now** on localhost.
+
 ## Layout
 
 | File | What it does |
@@ -37,9 +53,12 @@ legal boundary: unauthorised scanning is a criminal offence in the EU
 | `app/verification.py` | Proves domain ownership via a DNS TXT token |
 | `app/scanner.py` | Resolves DNS, probes 25 common ports, grabs banners, checks TLS and web headers |
 | `app/findings.py` | Turns scan data into findings: severity, CVSS, plain-English fix, NIS2 article |
-| `app/db.py` | Saves domains and scan history in SQLite (`aegis.db`) |
+| `app/changes.py` | Compares two scans: new/closed ports, new/fixed findings |
+| `app/monitor.py` | Weekly automatic scans, ownership re-check, alerts |
+| `app/db.py` | Saves domains, scan history and alerts in SQLite (`aegis.db`), with small migrations |
 | `app/static/` | The dashboard (HTML/CSS/JS) |
-| `tests/` | 27 tests, including a real scan of a fake FTP server on localhost |
+| `tools/fake_service.py` | Opens a fake service on a local port, for monitoring demos |
+| `tests/` | 46 tests, including a real scan of a fake FTP server on localhost |
 
 ## Roadmap
 
@@ -47,8 +66,9 @@ legal boundary: unauthorised scanning is a criminal offence in the EU
 - [x] Exposure scanner: ports, banners, TLS, web headers (verified domains only)
 - [x] Findings with CVSS score, fix advice and NIS2 mapping
 - [x] Dashboard with score and scan history
+- [x] Weekly scans + change alerts in the dashboard
+- [ ] Email delivery for alerts
 - [ ] CVE matching on software versions
-- [ ] Scheduled scans + email alerts
 - [ ] Customer accounts / login
 - [ ] NIS2 / GDPR readiness mapping
 - [ ] Phishing-awareness training module
