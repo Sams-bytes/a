@@ -7,6 +7,7 @@ Open:  http://127.0.0.1:8000
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -14,26 +15,48 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import scanner
-from app.db import Store, now
-from app.verification import InvalidDomain, NotVerified, VerificationService, record_value
+from app import monitor
+from app.db import Store
+from app.verification import (InvalidDomain, NotVerified, VerificationService, normalize_domain,
+                              record_value)
 
 STATIC = Path(__file__).parent / "static"
 
-app = FastAPI(title="Aegis", version="0.2.0",
-              description="Attack-surface monitoring for EU SMEs. Scans only verified domains.")
-app.mount("/static", StaticFiles(directory=STATIC), name="static")
-
 store = Store()
 verifier = VerificationService(store)
+INTERVAL = monitor.interval_from_env()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Runs when the server starts / stops. Lambdas so tests can swap store/verifier.
+    sched = None
+    if monitor.scheduler_enabled():
+        sched = monitor.Scheduler(lambda: store, lambda: verifier, INTERVAL)
+        sched.start()
+    yield
+    if sched:
+        sched.stop()
+
+
+app = FastAPI(title="Aegis", version="0.3.0", lifespan=lifespan,
+              description="Attack-surface monitoring for EU SMEs. Scans only verified domains.")
+app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
 class DomainIn(BaseModel):
     domain: str
 
 
+class DomainSettings(BaseModel):
+    monitor: bool
+
+
 def _domain_out(row: dict) -> dict:
+    due = monitor.next_due(row, INTERVAL) if row["verified_at"] and row.get("monitor", 1) else None
     return {
+        "monitor": bool(row.get("monitor", 1)),
+        "next_scan_due": due.isoformat(timespec="seconds") if due else None,
         "domain": row["domain"],
         "verified": bool(row["verified_at"]),
         "verified_at": row["verified_at"],
@@ -97,10 +120,45 @@ def scan_domain(domain: str):
     except NotVerified:
         raise HTTPException(status_code=403,
                             detail="Domain not verified. Aegis only scans domains you have proven you own.")
-    started = now()
-    result = scanner.scan(domain)
-    scan_id = store.add_scan(domain, started, result)
-    return store.get_scan(scan_id)
+    return monitor.run_scan(store, domain, "manual")
+
+
+@app.patch("/api/domains/{domain}")
+def update_domain(domain: str, body: DomainSettings):
+    try:
+        domain = normalize_domain(domain)
+    except InvalidDomain as e:
+        _bad_domain(e)
+    if not store.get_domain(domain):
+        raise HTTPException(status_code=404, detail="Add this domain first.")
+    store.set_monitor(domain, body.monitor)
+    return next(_domain_out(r) for r in store.list_domains() if r["domain"] == domain)
+
+
+# ---- monitoring & alerts ---------------------------------------------------
+@app.get("/api/monitor")
+def monitor_status():
+    return {"scheduler": monitor.scheduler_enabled(),
+            "interval_hours": INTERVAL.total_seconds() / 3600,
+            "check_every_minutes": monitor.CHECK_EVERY_S // 60,
+            "due_now": monitor.due_domains(store, INTERVAL)}
+
+
+@app.post("/api/monitor/run-now")
+def monitor_run_now():
+    """Run the automatic check now for every monitored domain (for demos/testing)."""
+    return monitor.run_due(store, verifier, INTERVAL, force=True)
+
+
+@app.get("/api/alerts")
+def list_alerts():
+    return store.list_alerts()
+
+
+@app.post("/api/alerts/seen")
+def alerts_seen(domain: str | None = None):
+    store.mark_alerts_seen(domain)
+    return {"ok": True}
 
 
 @app.get("/api/domains/{domain}/scans")

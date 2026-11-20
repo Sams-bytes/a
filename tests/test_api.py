@@ -84,3 +84,30 @@ def test_real_scan_of_localhost(client, monkeypatch):
     assert any(f["port"] == 21 and f["severity"] == "info" and f["exposed_severity"] == "high"
                for f in result["findings"])
     assert client.get("/api/domains/localhost/scans").json()[0]["score"] == result["score"]
+
+
+def test_monitoring_api(client, monkeypatch):
+    from app import scanner
+    ports = {"list": [80]}
+    monkeypatch.setattr(scanner, "scan", lambda d, **_: {
+        "domain": d, "ips": ["127.0.0.1"], "findings": [], "score": 100,
+        "open_ports": [{"port": p, "service": "x", "banner": ""} for p in ports["list"]]})
+
+    d = client.post("/api/domains", json={"domain": "localhost"}).json()
+    assert d["monitor"] is True and d["next_scan_due"] is None   # never scanned -> due now
+
+    assert client.post("/api/monitor/run-now").json()[0]["status"] == "scanned"
+    ports["list"] = [80, 5432]
+    client.post("/api/monitor/run-now")
+    alerts = client.get("/api/alerts").json()
+    assert len(alerts) == 1 and alerts[0]["seen_at"] is None
+    assert "New open port 5432" in alerts[0]["details"][0]
+
+    client.post("/api/alerts/seen?domain=localhost")
+    assert client.get("/api/alerts").json()[0]["seen_at"] is not None
+
+    row = client.get("/api/domains").json()[0]
+    assert row["next_scan_due"] is not None                      # scanned -> due in 7 days
+    assert client.patch("/api/domains/localhost", json={"monitor": False}).json()["monitor"] is False
+    assert client.post("/api/monitor/run-now").json() == []      # monitoring off -> nothing scanned
+    assert client.patch("/api/domains/nope.nl", json={"monitor": True}).status_code == 404

@@ -39,6 +39,10 @@ class NotVerified(PermissionError):
     pass
 
 
+class DNSUnavailable(RuntimeError):
+    """DNS could not be asked (offline, timeout). NOT the same as 'record missing'."""
+
+
 def normalize_domain(raw: str) -> str:
     """Turn user input like 'https://WWW.Example.nl/path' into 'www.example.nl'."""
     d = raw.strip().lower()
@@ -56,12 +60,17 @@ def new_token() -> str:
 
 
 def lookup_txt(domain: str) -> list[str]:
-    """All TXT record strings for a domain ([] if none or DNS unreachable)."""
+    """All TXT record strings for a domain ([] if it has none).
+
+    Raises DNSUnavailable when DNS could not be reached, so callers never mistake
+    "my Wi-Fi is down" for "the owner removed the record".
+    """
     try:
         answers = dns.resolver.resolve(domain, "TXT", lifetime=5)
-    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer, dns.exception.Timeout,
-            dns.resolver.NoNameservers):
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
         return []
+    except (dns.exception.Timeout, dns.resolver.NoNameservers) as e:
+        raise DNSUnavailable(str(e)) from e
     return [b"".join(r.strings).decode("utf-8", errors="replace") for r in answers]
 
 
@@ -91,11 +100,29 @@ class VerificationService:
         if row is None:
             raise KeyError(domain)
         if not row["verified_at"]:
-            records = [r.strip() for r in self._lookup(domain)]
+            try:
+                records = [r.strip() for r in self._lookup(domain)]
+            except DNSUnavailable:
+                return row  # couldn't check right now; stays unverified, user can retry
             if record_value(row["token"]) in records:
                 self.store.mark_verified(domain)
                 row = self.store.get_domain(domain)
         return row
+
+    def reverify(self, domain: str) -> bool:
+        """Is the TXT record STILL there? Asked before every automatic scan.
+
+        Consent can expire: a domain gets sold, or the owner removes the record.
+        Returns False only when DNS answered and the record is gone.
+        Raises DNSUnavailable when DNS could not be asked at all.
+        """
+        if domain in SELF_TEST_HOSTS:
+            return True
+        row = self.store.get_domain(domain)
+        if not row:
+            return False
+        records = [r.strip() for r in self._lookup(domain)]
+        return record_value(row["token"]) in records
 
     def require_verified(self, raw_domain: str) -> str:
         domain = normalize_domain(raw_domain)
