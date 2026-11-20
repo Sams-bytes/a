@@ -144,6 +144,20 @@ async function loadAlerts() {
   });
 }
 
+function renderCves(cves) {
+  const row = (c) => `<li>
+      <a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.id)}</a>
+      <span class="sev ${c.cvss >= 9 ? "critical" : c.cvss >= 7 ? "high" : c.cvss >= 4 ? "medium" : "low"}">CVSS ${c.cvss ?? "?"}</span>
+      ${c.kev ? `<span class="kev" title="On CISA's Known Exploited Vulnerabilities list">actively exploited</span>` : ""}
+      <div class="hint">${esc(c.summary)}</div></li>`;
+  const first = cves.slice(0, 5), rest = cves.slice(5);
+  return `<details class="cves" ${cves.length <= 5 ? "open" : ""}>
+      <summary>Known vulnerabilities (${cves.length}). Click an ID for NIST's details</summary>
+      <ul>${first.map(row).join("")}</ul>
+      ${rest.length ? `<details><summary>Show ${rest.length} more</summary><ul>${rest.map(row).join("")}</ul></details>` : ""}
+    </details>`;
+}
+
 function renderChanges(ch) {
   if (!ch || ch.first_scan) return "";
   const rows = [
@@ -212,6 +226,8 @@ function renderResult(scan) {
         <div class="facts">
           IP addresses: ${r.ips.map(esc).join(", ") || "none"}<br>
           Open ports: ${r.open_ports.map((p) => p.port).join(", ") || "none"}<br>
+          Software detected: ${(r.software || []).map((s) =>
+            `${esc(s.name)} ${esc(s.version)}${s.ports.length ? ` (port ${s.ports.join(", ")})` : ""}`).join(", ") || "none announced"}<br>
           HTTPS: ${tlsText}<br>
           Scanned ${new Date(scan.finished_at).toLocaleString()}${r.duration_s ? ` in ${r.duration_s}s` : ""}
         </div>
@@ -223,6 +239,9 @@ function renderResult(scan) {
       This shows which programs are running on this computer, not what the internet can reach.
       Your firewall decides that. Open ports here are shown as <i>info</i>, with how serious
       they would be if they were exposed. To see the attacker's view, scan your public domain.</div>` : ""}
+    ${r.vulns && r.vulns.live === false ? `<div class="card local-note">
+      <b>Live CVE check skipped</b> (no connection to NIST's database). Showing matches from Aegis's
+      built-in list of well-known CVEs only. Run the scan again when online for the full picture.</div>` : ""}
     <h3>Findings, worst first</h3>
     ${r.findings.length ? r.findings.map((f) => `
       <div class="finding ${f.severity}">
@@ -231,6 +250,7 @@ function renderResult(scan) {
             ? ` · if exposed: ${f.exposed_severity}, CVSS ${f.exposed_cvss.toFixed(1)}` : ""}</span></div>
         <p>${esc(f.what)}</p>
         <p class="fix">${esc(f.fix)}</p>
+        ${f.cves ? renderCves(f.cves) : ""}
         <p class="law">NIS2 ${esc(f.nis2)}${f.port ? ` · port ${f.port}` : ""}</p>
       </div>`).join("") : `<div class="card">No issues found. Nice work.</div>`}
     <h3>Open ports</h3>

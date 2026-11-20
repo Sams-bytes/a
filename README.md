@@ -44,6 +44,28 @@ dashboard. The **What changed** card shows the details.
 - Try it: run `.venv\Scripts\python tools\fake_service.py 5432` (a fake database on
   your own computer), then press **Run automatic check now** on localhost.
 
+## CVE matching
+
+Many servers announce their software and version (`SSH-2.0-OpenSSH_8.2p1`,
+`Server: Apache/2.4.49`). Aegis recognises these (`app/fingerprint.py`) and looks
+up known vulnerabilities (CVEs) for that exact version (`app/cve.py`):
+
+1. **Built-in list** (`app/data/known_cves.json`): about 20 famous CVEs. Works offline.
+2. **Live NVD lookup**: NIST's National Vulnerability Database, cached for 24 h.
+   Only the software identifier (a CPE name such as
+   `cpe:2.3:a:apache:http_server:2.4.49:…`) is sent, never your domain.
+
+You get one finding per product ("ProFTPD 1.3.5: 19 known vulnerabilities (1
+actively exploited)"), with the version to update to and links to NIST.
+**Actively exploited** means the CVE is on CISA's Known Exploited
+Vulnerabilities (KEV) list. Version matching gives *possible* matches: Linux
+distributions often fix holes without changing the version number, and Aegis
+says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack.
+
+- Settings: `NVD_API_KEY` (optional, free from NIST, faster lookups), `AEGIS_CVE_LIVE=0` (built-in list only).
+- Try it: `.venv\Scripts\python tools\fake_service.py 21 --banner "220 ProFTPD 1.3.5 Server"`,
+  then **Run scan** on localhost.
+
 ## Layout
 
 | File | What it does |
@@ -53,12 +75,14 @@ dashboard. The **What changed** card shows the details.
 | `app/verification.py` | Proves domain ownership via a DNS TXT token |
 | `app/scanner.py` | Resolves DNS, probes 25 common ports, grabs banners, checks TLS and web headers |
 | `app/findings.py` | Turns scan data into findings: severity, CVSS, plain-English fix, NIS2 article |
+| `app/fingerprint.py` | Recognises software + version in banners and headers |
+| `app/cve.py`, `app/data/known_cves.json` | CVE matching: built-in list + live NVD (cached) |
 | `app/changes.py` | Compares two scans: new/closed ports, new/fixed findings |
 | `app/monitor.py` | Weekly automatic scans, ownership re-check, alerts |
 | `app/db.py` | Saves domains, scan history and alerts in SQLite (`aegis.db`), with small migrations |
 | `app/static/` | The dashboard (HTML/CSS/JS) |
-| `tools/fake_service.py` | Opens a fake service on a local port, for monitoring demos |
-| `tests/` | 46 tests, including a real scan of a fake FTP server on localhost |
+| `tools/fake_service.py` | Opens a fake service on a local port (optionally with a banner), for demos |
+| `tests/` | 63 tests, including a real scan of a fake FTP server on localhost |
 
 ## Roadmap
 
@@ -68,7 +92,7 @@ dashboard. The **What changed** card shows the details.
 - [x] Dashboard with score and scan history
 - [x] Weekly scans + change alerts in the dashboard
 - [ ] Email delivery for alerts
-- [ ] CVE matching on software versions
+- [x] CVE matching on software versions (built-in list + live NVD)
 - [ ] Customer accounts / login
 - [ ] NIS2 / GDPR readiness mapping
 - [ ] Phishing-awareness training module
