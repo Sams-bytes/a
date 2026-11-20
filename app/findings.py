@@ -105,6 +105,46 @@ def _as_local(f: dict, service: str) -> dict:
             "exposed_cvss": f["cvss"] if risky else None}
 
 
+def _cvss_severity(score: float) -> str:
+    return "critical" if score >= 9 else "high" if score >= 7 else "medium" if score >= 4 else "low"
+
+
+def cve_findings(scan: dict) -> list[dict]:
+    """One finding per detected product with known CVEs (not one per CVE, so 88
+    Apache CVEs don't bury everything else or crush the score)."""
+    out = []
+    for item in (scan.get("vulns") or {}).get("items", []):
+        cves = item["cves"]
+        if not cves:
+            continue
+        top = max((c["cvss"] or 0) for c in cves)
+        kev = [c for c in cves if c["kev"]]
+        severity = _cvss_severity(top)
+        if kev and severity in ("medium", "low"):
+            severity = "high"  # criminals are using it right now
+        n = len(cves)
+        title = f"{item['name']} {item['version']}: {n} known vulnerabilit{'y' if n == 1 else 'ies'}"
+        if kev:
+            title += f" ({len(kev)} actively exploited)"
+        worst = cves[0]
+        what = (f"This version has publicly known security holes. "
+                f"Most urgent: {worst['id']} (CVSS {worst['cvss']}"
+                f"{', actively exploited' if worst['kev'] else ''}): {worst['summary']}")
+        fix = (f"Update {item['name']} to {item['fix_version']} or newer."
+               if item.get("fix_version") else f"Update {item['name']} to the latest version.")
+        if item.get("distro"):
+            fix += (f" Note: the server says it runs {item['distro']}, which often fixes holes without "
+                    f"changing the version number. Check that security updates are installed; "
+                    f"some of these may already be fixed.")
+        fix += " Also consider hiding the version number in the banner."
+        f = _f(severity, top, title, what, fix, NIS2_VULN, port=(item.get("ports") or [None])[0])
+        f.update(kind="cve", key=f"cve:{item['product']}:{item['version']}:{','.join(sorted(c['id'] for c in cves))}",
+                 cves=[{"id": c["id"], "cvss": c["cvss"], "kev": c["kev"], "summary": c["summary"],
+                        "url": f"https://nvd.nist.gov/vuln/detail/{c['id']}"} for c in cves])
+        out.append(f)
+    return out
+
+
 def build_findings(scan: dict) -> list[dict]:
     out: list[dict] = []
     open_ports = {p["port"]: p for p in scan.get("open_ports", [])}
@@ -153,6 +193,8 @@ def build_findings(scan: dict) -> list[dict]:
                           "Hide the version number in the server configuration.", NIS2_VULN))
             break
 
+    out.extend(cve_findings(scan))
+
     http = scan.get("http") or {}
     if http and "error" not in http and not http.get("redirects_to_https"):
         out.append(_f("medium", 5.3, "Website is served without forcing HTTPS",
@@ -166,9 +208,10 @@ def build_findings(scan: dict) -> list[dict]:
                           "Close it if nobody needs it from the internet.", NIS2_VULN, p["port"]))
 
     if is_local_scan(scan):
-        # Only "port X is open" findings change; web/TLS findings (ports 80/443) stay as they are.
+        # Only "port X is open" findings change; web/TLS findings (ports 80/443) and
+        # CVE findings stay as they are - outdated software is a problem even locally.
         out = [_as_local(f, open_ports[f["port"]]["service"])
-               if f["port"] in open_ports and f["port"] not in (80, 443) else f
+               if f["port"] in open_ports and f["port"] not in (80, 443) and f.get("kind") != "cve" else f
                for f in out]
 
     out.sort(key=lambda f: (SEVERITY_ORDER[f["severity"]], -f["cvss"]))

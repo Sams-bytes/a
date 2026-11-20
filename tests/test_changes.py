@@ -42,6 +42,15 @@ def test_new_info_finding_alone_is_not_an_alert():
     assert not is_bad(ch)
 
 
+def test_new_cve_for_same_software_alerts():
+    old = finding("Apache 2.4.62: 1 known vulnerability", "high", 443)
+    old["key"] = "cve:apache:2.4.62:CVE-2026-0001"
+    new = finding("Apache 2.4.62: 2 known vulnerabilities", "high", 443)
+    new["key"] = "cve:apache:2.4.62:CVE-2026-0001,CVE-2026-0002"
+    ch = compare(result([443], [old], 85), result([443], [new], 85))
+    assert is_bad(ch)  # same software, same score - but a new CVE was published
+
+
 def test_unchanged_scan_is_quiet():
     r = result([80, 443], [finding("x", "low", 443)], 97)
     ch = compare(r, r)

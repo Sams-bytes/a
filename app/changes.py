@@ -10,8 +10,12 @@ from __future__ import annotations
 
 
 def _key(f: dict) -> tuple:
-    """A finding is 'the same' in two scans when title and port match."""
-    return (f.get("title"), f.get("port"))
+    """A finding is 'the same' in two scans when title and port match.
+
+    CVE findings carry their own key (product + version + CVE ids), so a NEW
+    CVE published for software you run counts as a new finding -> alert.
+    """
+    return f.get("key") or (f.get("title"), f.get("port"))
 
 
 def compare(old: dict | None, new: dict) -> dict:

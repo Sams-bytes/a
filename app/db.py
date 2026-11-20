@@ -35,6 +35,11 @@ CREATE TABLE IF NOT EXISTS alerts (
     details     TEXT NOT NULL,          -- JSON list of plain-English lines
     seen_at     TEXT
 );
+CREATE TABLE IF NOT EXISTS cve_cache (
+    key         TEXT PRIMARY KEY,       -- e.g. a CPE name like cpe:2.3:a:apache:http_server:2.4.49:...
+    fetched_at  TEXT NOT NULL,
+    data        TEXT NOT NULL           -- JSON answer from NVD
+);
 """
 
 # Migrations: columns added after the first version of the schema.
@@ -170,6 +175,22 @@ class Store:
             d["details"] = json.loads(d["details"])
             out.append(d)
         return out
+
+    # ---- CVE cache -----------------------------------------------------
+    def get_cache(self, key: str, max_age_s: float):
+        """Cached JSON for `key`, or None if missing or older than max_age_s."""
+        with self._lock:
+            row = self._conn.execute("SELECT fetched_at, data FROM cve_cache WHERE key=?", (key,)).fetchone()
+        if not row:
+            return None
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(row["fetched_at"])).total_seconds()
+        return json.loads(row["data"]) if age <= max_age_s else None
+
+    def set_cache(self, key: str, data) -> None:
+        with self._lock:
+            self._conn.execute("INSERT OR REPLACE INTO cve_cache(key, fetched_at, data) VALUES (?,?,?)",
+                               (key, now(), json.dumps(data)))
+            self._conn.commit()
 
     def mark_alerts_seen(self, domain: str | None = None) -> None:
         with self._lock:

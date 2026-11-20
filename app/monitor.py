@@ -27,7 +27,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
-from app import scanner
+from app import cve, scanner
 from app.changes import compare, describe, is_bad
 from app.db import Store, now
 from app.verification import DNSUnavailable, VerificationService
@@ -63,7 +63,7 @@ def run_scan(store: Store, domain: str, source: str = "manual") -> dict:
     with _lock_for(domain):
         previous = store.latest_scan(domain)
         started = now()
-        result = scanner.scan(domain)
+        result = scanner.scan(domain, matcher=cve.Matcher(store))
         changes = compare(previous["result"] if previous else None, result)
         result["changes"] = changes
         scan_id = store.add_scan(domain, started, result, source)

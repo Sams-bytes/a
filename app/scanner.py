@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 import httpx
 
 from app.findings import build_findings, is_local_scan, score_findings
+from app.fingerprint import detect
 
 # port -> human-readable service name
 PORTS: dict[int, str] = {
@@ -118,13 +119,15 @@ def check_http(host: str, https: bool) -> dict:
         "status": r.status_code,
         "redirects_to_https": r.is_redirect and location.startswith("https://"),
         "server": r.headers.get("server", ""),
+        "powered_by": r.headers.get("x-powered-by", ""),
         "hsts": "strict-transport-security" in r.headers,
         "csp": "content-security-policy" in r.headers,
         "x_frame": "x-frame-options" in r.headers or "frame-ancestors" in r.headers.get("content-security-policy", ""),
     }
 
 
-def scan(domain: str, timeout: float = 1.5, log=lambda msg: None) -> dict:
+def scan(domain: str, timeout: float = 1.5, log=lambda msg: None, matcher=None) -> dict:
+    """matcher: an app.cve.Matcher; when given, detected software is checked for CVEs."""
     started = datetime.now(timezone.utc)
     log(f"Resolving DNS for {domain}")
     ips = resolve(domain)
@@ -148,6 +151,10 @@ def scan(domain: str, timeout: float = 1.5, log=lambda msg: None) -> dict:
     if 80 in open_set:
         result["http"] = check_http(domain, https=False)
 
+    result["software"] = detect(result)
+    if matcher and result["software"]:
+        log("Checking detected software for known vulnerabilities (CVEs)")
+        result["vulns"] = matcher.match(result["software"])
     result["local"] = is_local_scan(result)
     result["findings"] = build_findings(result)
     result["score"] = score_findings(result["findings"])
