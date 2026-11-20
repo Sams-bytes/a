@@ -79,5 +79,8 @@ def test_real_scan_of_localhost(client, monkeypatch):
     result = scan["result"]
     ftp = [p for p in result["open_ports"] if p["port"] == 21]
     assert ftp and "FakeFTP" in ftp[0]["banner"]
-    assert any(f["port"] == 21 and f["severity"] == "high" for f in result["findings"])
+    # Local scan: FTP is reported as info, with "high if exposed" kept for context.
+    assert result["local"] is True
+    assert any(f["port"] == 21 and f["severity"] == "info" and f["exposed_severity"] == "high"
+               for f in result["findings"])
     assert client.get("/api/domains/localhost/scans").json()[0]["score"] == result["score"]

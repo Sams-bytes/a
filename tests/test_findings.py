@@ -36,6 +36,37 @@ def test_http_without_redirect():
     assert any("without forcing HTTPS" in x["title"] for x in f)
 
 
+def test_local_scan_is_detected():
+    from app.findings import is_local_scan
+    assert is_local_scan({"domain": "localhost"})
+    assert is_local_scan({"domain": "x.test", "ips": ["127.0.0.1", "::1"]})
+    assert not is_local_scan({"domain": "example.nl", "ips": ["93.184.216.34"]})
+    assert not is_local_scan({"domain": "example.nl", "ips": ["127.0.0.1", "93.184.216.34"]})
+
+
+def test_smb_on_localhost_is_info_not_critical():
+    f = build_findings({"domain": "localhost", "ips": ["127.0.0.1"],
+                        "open_ports": [{"port": 445, "service": "SMB (Windows file sharing)", "banner": ""}]})
+    assert len(f) == 1
+    smb = f[0]
+    assert smb["severity"] == "info" and smb["cvss"] == 0.0
+    assert smb["exposed_severity"] == "critical" and smb["exposed_cvss"] == 9.8
+    assert "open on this computer" in smb["title"]
+    assert "firewall" in smb["fix"]
+    assert score_findings(f) == 100
+
+
+def test_same_port_on_real_domain_stays_critical():
+    f = build_findings({"domain": "example.nl", "ips": ["93.184.216.34"], "open_ports": ports(445)})
+    assert f[0]["severity"] == "critical" and "exposed to the internet" in f[0]["title"]
+
+
+def test_local_scan_keeps_web_findings():
+    f = build_findings({"domain": "localhost", "ips": ["127.0.0.1"], "open_ports": ports(80),
+                        "http": {"redirects_to_https": False, "server": ""}})
+    assert any("without forcing HTTPS" in x["title"] for x in f)
+
+
 def test_score_never_negative():
     f = build_findings({"open_ports": ports(21, 23, 445, 3389, 27017, 6379)})
     assert score_findings(f) == 0

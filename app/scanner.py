@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 
 import httpx
 
-from app.findings import build_findings, score_findings
+from app.findings import build_findings, is_local_scan, score_findings
 
 # port -> human-readable service name
 PORTS: dict[int, str] = {
@@ -148,6 +148,7 @@ def scan(domain: str, timeout: float = 1.5, log=lambda msg: None) -> dict:
     if 80 in open_set:
         result["http"] = check_http(domain, https=False)
 
+    result["local"] = is_local_scan(result)
     result["findings"] = build_findings(result)
     result["score"] = score_findings(result["findings"])
     result["duration_s"] = round((datetime.now(timezone.utc) - started).total_seconds(), 1)

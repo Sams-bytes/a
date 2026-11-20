@@ -10,6 +10,8 @@ Every finding has:
 
 from __future__ import annotations
 
+import ipaddress
+
 NIS2_ACCESS = "Art. 21(2)(i) access control"
 NIS2_CRYPTO = "Art. 21(2)(h) cryptography & encryption"
 NIS2_VULN = "Art. 21(2)(e) secure systems & vulnerability handling"
@@ -64,6 +66,43 @@ SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
 def _f(severity, cvss, title, what, fix, nis2, port=None):
     return {"severity": severity, "cvss": cvss, "title": title, "what": what,
             "fix": fix, "nis2": nis2, "port": port}
+
+
+def is_local_scan(scan: dict) -> bool:
+    """True when the target is this computer itself (localhost / 127.0.0.1 / ::1).
+
+    A local scan looks at the machine from the INSIDE: it shows which programs
+    are listening, but not whether the firewall lets the internet reach them.
+    """
+    if scan.get("domain") == "localhost":
+        return True
+    ips = scan.get("ips") or []
+    try:
+        return bool(ips) and all(ipaddress.ip_address(ip).is_loopback for ip in ips)
+    except ValueError:
+        return False
+
+
+def _as_local(f: dict, service: str) -> dict:
+    """Rewrite a port finding for a local scan.
+
+    Severity drops to info: from the inside we can only prove the port is OPEN,
+    not that it is REACHABLE from outside. We keep what the severity WOULD be
+    if exposed, so the owner still learns why this port matters.
+    """
+    risky = f["severity"] != "info"
+    what = "You scanned this computer from the inside, so this shows a program is running, not that the internet can reach it."
+    if risky:
+        what += f" If this port were reachable from the internet it would be {f['severity']} (CVSS {f['cvss']}): {f['what']}"
+        fix = (f"Check that your firewall blocks port {f['port']} from outside (scan your public domain to be sure). "
+               f"If it is ever exposed: {f['fix']}")
+    else:
+        fix = f"Nothing to do if you know what this is. Make sure your firewall blocks port {f['port']} from outside."
+    return {**f, "severity": "info", "cvss": 0.0,
+            "title": f"Port {f['port']} open on this computer ({service})",
+            "what": what, "fix": fix,
+            "exposed_severity": f["severity"] if risky else None,
+            "exposed_cvss": f["cvss"] if risky else None}
 
 
 def build_findings(scan: dict) -> list[dict]:
@@ -125,6 +164,12 @@ def build_findings(scan: dict) -> list[dict]:
             out.append(_f("info", 0.0, f"Port {p['port']} open ({p['service']})",
                           "Not necessarily a problem, but every open port is something to keep patched.",
                           "Close it if nobody needs it from the internet.", NIS2_VULN, p["port"]))
+
+    if is_local_scan(scan):
+        # Only "port X is open" findings change; web/TLS findings (ports 80/443) stay as they are.
+        out = [_as_local(f, open_ports[f["port"]]["service"])
+               if f["port"] in open_ports and f["port"] not in (80, 443) else f
+               for f in out]
 
     out.sort(key=lambda f: (SEVERITY_ORDER[f["severity"]], -f["cvss"]))
     return out

@@ -150,11 +150,16 @@ function renderResult(scan) {
       </div>
     </div>
     ${r.error ? `<div class="card" style="color:var(--crit)">${esc(r.error)}</div>` : ""}
+    ${r.local ? `<div class="card local-note"><b>Local scan: you are looking from the inside.</b>
+      This shows which programs are running on this computer, not what the internet can reach.
+      Your firewall decides that. Open ports here are shown as <i>info</i>, with how serious
+      they would be if they were exposed. To see the attacker's view, scan your public domain.</div>` : ""}
     <h3>Findings, worst first</h3>
     ${r.findings.length ? r.findings.map((f) => `
       <div class="finding ${f.severity}">
         <div class="t"><span>${esc(f.title)}</span>
-          <span class="sev ${f.severity}">${f.severity}${f.cvss ? ` · CVSS ${f.cvss.toFixed(1)}` : ""}</span></div>
+          <span class="sev ${f.severity}">${f.severity}${f.cvss ? ` · CVSS ${f.cvss.toFixed(1)}` : ""}${f.exposed_severity
+            ? ` · if exposed: ${f.exposed_severity}, CVSS ${f.exposed_cvss.toFixed(1)}` : ""}</span></div>
         <p>${esc(f.what)}</p>
         <p class="fix">${esc(f.fix)}</p>
         <p class="law">NIS2 ${esc(f.nis2)}${f.port ? ` · port ${f.port}` : ""}</p>
