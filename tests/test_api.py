@@ -52,8 +52,12 @@ def test_errors(client):
 
 def test_real_scan_of_localhost(client, monkeypatch):
     """Open a real port on this machine (pretending to be FTP) and check Aegis finds it."""
-    srv = socket.socket()
-    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:  # something already on port 21 (e.g. tools/fake_service.py) would answer instead of us
+        socket.create_connection(("127.0.0.1", 21), timeout=0.5).close()
+        pytest.skip("port 21 is already in use on this computer")
+    except OSError:
+        pass
+    srv = socket.socket()  # no SO_REUSEADDR: on Windows it lets two programs share a port
     try:
         srv.bind(("127.0.0.1", 21))
     except OSError:
