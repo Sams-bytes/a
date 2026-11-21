@@ -146,6 +146,24 @@ table.ports td.b { font-family: var(--mono); font-size: .8rem; color: var(--mute
 .card.hosting { line-height: 1.6; }
 .card.subs table.ports { margin-top: 8px; }
 
+/* My network map */
+.navbtn { width: 100%; text-align: left; margin-bottom: 16px; font-weight: 600; }
+.navbtn.active { border-color: var(--accent); color: var(--accent); }
+.netmap { width: 100%; height: auto; margin: 4px 0; display: block; }
+.netmap .wire { stroke: var(--line); stroke-width: 2; }
+.netmap .dev { cursor: pointer; }
+.netmap .dev-bg { fill: var(--bg); stroke: var(--line); stroke-width: 2; }
+.netmap .dev-bg.self { stroke: var(--accent); stroke-width: 3; }
+.netmap .dev.sel .dev-bg { stroke: var(--accent); stroke-width: 3; }
+.netmap .dev:hover .dev-bg { fill: var(--panel); stroke: var(--accent); }
+.netmap .ico { font-size: 26px; }
+.netmap .lbl { fill: var(--ink); font-size: 12px; }
+.netmap .lbl.new { fill: var(--crit); font-weight: 700; }
+.netmap .dev.new .dev-bg { stroke: var(--crit); stroke-width: 3; animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { stroke-opacity: .35; } }
+.net-detail { min-height: 2.4em; padding-top: 8px; border-top: 1px solid var(--line); }
+.net-setup label { display: block; }
+
 .card.changes { border-left: 4px solid var(--accent); }
 .card.changes h3 { margin-top: 0; }
 .card.changes ul { margin: 0 0 8px; padding-left: 18px; }

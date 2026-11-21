@@ -44,6 +44,23 @@ dashboard. The **What changed** card shows the details.
 - Try it: run `.venv\Scripts\python tools\fake_service.py 5432` (a fake database on
   your own computer), then press **Run automatic check now** on localhost.
 
+## Network map (your own network)
+
+Click **My network map** in the dashboard to see every device on your own
+Wi-Fi/LAN — router, computers, phones, printers, smart gadgets — drawn as a map
+you can click. It uses Nmap host discovery (`-sn`), which on a local network uses
+ARP, so it also learns each device's MAC address and maker (Apple, Samsung,
+Zyxel…). A device that appears for the first time is flagged, so you notice a
+stranger on your Wi-Fi.
+
+- **Only your own network.** Aegis offers only the private ranges this computer
+  is on, and scans one only after you tick "this network is mine". Scanning a
+  café/hotel/client network without permission is a crime, like scanning a
+  stranger's server.
+- **Deep scan** (open ports + OS detection) needs administrator rights: run
+  `start-admin.bat` (one Windows UAC prompt). Without admin you still get the
+  full device list with makers and names.
+
 ## Hosting check: light vs full scan
 
 Owning a domain is not owning the server. If a domain's IP addresses belong
@@ -117,9 +134,11 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 | File | What it does |
 |------|--------------|
 | `start.bat` | One-click launcher for Windows |
+| `start-admin.bat` | Launch as admin (for the network map's deep scan) |
 | `app/main.py` | Web server: serves the dashboard and the API |
 | `app/verification.py` | Proves domain ownership via a DNS TXT token |
 | `app/scanner.py` | Resolves DNS, scans ports (Nmap or built-in), checks TLS and web headers |
+| `app/netmap.py` | Maps your own LAN (device discovery, MAC vendors, OS, rogue-device flag) |
 | `app/hosting.py` | Who owns an IP (RDAP) → light or full scan |
 | `app/subdomains.py` | Subdomain discovery: certificate logs, DNS, common names, takeover check |
 | `app/nmap_engine.py` | Runs Nmap safely (TCP top 1,000 + UDP) and parses its XML |
@@ -131,7 +150,7 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 | `app/db.py` | Saves domains, scan history and alerts in SQLite (`aegis.db`), with small migrations |
 | `app/static/` | The dashboard (HTML/CSS/JS) |
 | `tools/fake_service.py` | Opens a fake service on a local port (optionally with a banner), for demos |
-| `tests/` | 86 tests, including a real scan of a fake FTP server on localhost |
+| `tests/` | 95 tests, including a real scan of a fake FTP server on localhost |
 
 ## Roadmap
 

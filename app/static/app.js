@@ -40,6 +40,7 @@ async function loadDomains() {
         : "unverified"}</span>
     </li>`).join("") || `<li class="hint">No domains yet.</li>`;
   ul.querySelectorAll("li[data-d]").forEach((li) => li.onclick = () => select(li.dataset.d));
+  $("#netmap-btn").classList.toggle("active", current === "__network__");
 }
 
 $("#add-form").onsubmit = async (e) => {
@@ -358,6 +359,125 @@ async function removeDomain(domain) {
   current = null;
   location.reload();
 }
+
+// ================= My network map =================
+const DEVICE = {
+  router: { icon: "📶", label: "Router / gateway" }, computer: { icon: "💻", label: "Computer" },
+  phone: { icon: "📱", label: "Phone / tablet" }, printer: { icon: "🖨️", label: "Printer" },
+  tv: { icon: "📺", label: "TV / media" }, iot: { icon: "💡", label: "Smart device (IoT)" },
+  unknown: { icon: "❓", label: "Unknown device" },
+};
+
+async function openNetwork() {
+  current = "__network__";
+  loadDomains();                       // refresh sidebar active state
+  const detail = $("#detail");
+  detail.innerHTML = `<div class="card"><h1>My network map</h1>
+    <p>See every device on your own network — router, computers, phones, printers, smart gadgets —
+    and spot anything that shouldn't be there.</p>
+    <p class="legal">Only scan a network that is <b>yours</b> (your home or your office). Scanning
+    someone else's network — a café, a hotel, a client — without written permission is a crime,
+    exactly like scanning a stranger's server.</p>
+    <div class="net-setup hint">Looking for your networks…</div></div>
+    <div id="net-view"></div>`;
+  try {
+    const info = await api("GET", "/api/network/interfaces");
+    const box = $(".net-setup");
+    if (!info.nmap) { box.innerHTML = `Install <a href="https://nmap.org/download.html" target="_blank" rel="noopener">Nmap</a> first — the network map needs it.`; return; }
+    if (!info.networks.length) { box.innerHTML = `No private network found. Connect to Wi-Fi and reopen this page.`; return; }
+    box.innerHTML = `
+      <label>Network:
+        <select class="net-cidr">${info.networks.map((n) =>
+          `<option value="${esc(n.cidr)}">${esc(n.cidr)}${n.gateway ? ` (router ${esc(n.gateway)})` : ""}</option>`).join("")}</select>
+      </label>
+      <label class="switch" style="margin:8px 0"><input type="checkbox" class="net-own"> This network is mine and I'm allowed to scan it</label>
+      <label class="switch"><input type="checkbox" class="net-deep" ${info.admin ? "" : "disabled"}>
+        Deep scan: open ports + operating system ${info.admin ? "" : "(needs admin — relaunch Aegis as administrator)"}</label>
+      <div class="row" style="margin-top:10px">
+        <button class="net-scan" disabled>Scan my network</button>
+        ${info.admin ? "" : `<span class="hint">Running as admin would add device makers and OS detection.</span>`}
+      </div>`;
+    const own = $(".net-own"), btn = $(".net-scan");
+    own.onchange = () => btn.disabled = !own.checked;
+    btn.onclick = () => scanNetwork($(".net-cidr").value, $(".net-deep").checked, btn);
+    const first = info.networks.find((n) => n.scanned);
+    if (first) { try { drawNetwork(await api("GET", `/api/network/last?cidr=${encodeURIComponent(first.cidr)}`)); } catch {} }
+  } catch (err) { $(".net-setup").innerHTML = esc(err.message); }
+}
+
+async function scanNetwork(cidr, deep, btn) {
+  btn.disabled = true;
+  $("#net-view").innerHTML = `<div class="card scanning"><div class="spinner"></div>
+    <span>Scanning ${esc(cidr)} — ${deep ? "this can take a minute or two" : "a few seconds"}. The server window shows Nmap working.</span></div>`;
+  try {
+    drawNetwork(await api("POST", "/api/network/scan", { cidr, confirm: true, deep }));
+  } catch (err) {
+    $("#net-view").innerHTML = `<div class="card" style="color:var(--crit)">${esc(err.message)}</div>`;
+  }
+  btn.disabled = false;
+}
+
+function drawNetwork(r) {
+  const devices = r.devices || [];
+  const others = devices.filter((d) => !d.is_gateway);
+  const W = 720, H = Math.max(420, 240 + others.length * 18), cx = W / 2, cy = H / 2;
+  const R = Math.min(cx, cy) - 70;
+  const node = (d, x, y) => {
+    const m = DEVICE[d.type] || DEVICE.unknown;
+    const name = d.hostname || d.ip;
+    return `<g class="dev ${d.is_new ? "new" : ""}" data-ip="${esc(d.ip)}" transform="translate(${x},${y})">
+      <circle r="26" class="dev-bg ${d.is_self ? "self" : ""}"/>
+      <text class="ico" y="9" text-anchor="middle">${m.icon}</text>
+      <text class="lbl" y="44" text-anchor="middle">${esc(name.replace(/\.home$/, ""))}</text>
+      ${d.is_new ? `<text class="lbl new" y="58" text-anchor="middle">new!</text>` : ""}</g>`;
+  };
+  const router = devices.find((d) => d.is_gateway);
+  const spokes = others.map((d, i) => {
+    const a = (i / others.length) * 2 * Math.PI - Math.PI / 2;
+    const x = cx + R * Math.cos(a), y = cy + R * Math.sin(a);
+    return { d, x, y, line: `<line x1="${cx}" y1="${cy}" x2="${x}" y2="${y}" class="wire"/>` };
+  });
+  const svg = `<svg viewBox="0 0 ${W} ${H}" class="netmap" role="img" aria-label="network map">
+    ${spokes.map((s) => s.line).join("")}
+    ${router ? node(router, cx, cy) : `<g transform="translate(${cx},${cy})"><circle r="26" class="dev-bg"/><text class="ico" y="9" text-anchor="middle">🌐</text><text class="lbl" y="44" text-anchor="middle">internet</text></g>`}
+    ${spokes.map((s) => node(s.d, s.x, s.y)).join("")}
+  </svg>`;
+
+  const newOnes = devices.filter((d) => d.is_new);
+  $("#net-view").innerHTML = `
+    ${newOnes.length ? `<div class="card local-note" style="border-left-color:var(--crit)">
+      <b>⚠ ${newOnes.length} device${newOnes.length > 1 ? "s" : ""} not seen before:</b>
+      ${newOnes.map((d) => esc(d.hostname || d.ip)).join(", ")}. If you don't recognise ${newOnes.length > 1 ? "them" : "it"},
+      someone may be on your network — change your Wi-Fi password.</div>` : ""}
+    <div class="card">
+      <div class="facts" style="margin:0 0 8px">${r.network} · ${r.count} devices · ${esc(r.engine || "")}
+        ${r.admin ? "" : "· basic scan (run as admin for OS detection)"}</div>
+      ${svg}
+      <div class="net-detail hint">Click a device to see its details.</div>
+    </div>
+    <table class="ports"><tr><th>Device</th><th>IP</th><th>Maker</th><th>Type</th><th>Ports</th></tr>
+      ${devices.map((d) => `<tr data-ip="${esc(d.ip)}">
+        <td><b>${esc((d.hostname || "?").replace(/\.home$/, ""))}</b>${d.is_self ? ` <span class="tag">this PC</span>` : ""}${d.is_new ? ` <span class="kev">new</span>` : ""}</td>
+        <td class="b">${esc(d.ip)}</td>
+        <td>${esc(d.vendor || (d.randomized_mac ? "hidden (random MAC)" : "—"))}</td>
+        <td>${(DEVICE[d.type] || DEVICE.unknown).label}</td>
+        <td class="b">${(d.open_ports || []).map((p) => p.port).join(", ") || "—"}</td></tr>`).join("")}
+    </table>`;
+
+  const show = (ip) => {
+    const d = devices.find((x) => x.ip === ip); if (!d) return;
+    const m = DEVICE[d.type] || DEVICE.unknown;
+    $(".net-detail").innerHTML = `<b>${m.icon} ${esc(d.hostname || d.ip)}</b> — ${m.label}<br>
+      IP ${esc(d.ip)}${d.mac ? ` · MAC ${esc(d.mac)}` : ""}${d.vendor ? ` · ${esc(d.vendor)}` : ""}
+      ${d.randomized_mac ? `<br><span class="hint">Uses a random MAC address (a privacy feature of phones), so the maker is hidden.</span>` : ""}
+      ${d.os ? `<br>OS guess: ${esc(d.os)}` : ""}
+      ${(d.open_ports || []).length ? `<br>Open ports: ${d.open_ports.map((p) => `${p.port} ${esc(p.service || "")}`).join(", ")}` : ""}`;
+    document.querySelectorAll(".dev").forEach((g) => g.classList.toggle("sel", g.dataset.ip === ip));
+  };
+  $("#net-view").querySelectorAll("[data-ip]").forEach((el) => el.onclick = () => show(el.dataset.ip));
+}
+
+$("#netmap-btn").onclick = openNetwork;
 
 loadDomains().then(() => { if (domains[0]) select(domains[0].domain); });
 loadAlerts();
