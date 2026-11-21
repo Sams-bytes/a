@@ -16,6 +16,7 @@ const scoreLabel = (s) => s >= 80 ? "Good" : s >= 60 ? "Moderate risk" : s >= 40
 
 let domains = [];
 let current = null;
+let trafficTimer = null;   // the "Live traffic" view auto-refreshes; this lets us stop it
 
 // ---------- theme ----------
 try { const t = localStorage.getItem("aegis-theme"); if (t) document.documentElement.dataset.theme = t; } catch {}
@@ -41,6 +42,7 @@ async function loadDomains() {
     </li>`).join("") || `<li class="hint">No domains yet.</li>`;
   ul.querySelectorAll("li[data-d]").forEach((li) => li.onclick = () => select(li.dataset.d));
   $("#netmap-btn").classList.toggle("active", current === "__network__");
+  $("#traffic-btn").classList.toggle("active", current === "__traffic__");
 }
 
 $("#add-form").onsubmit = async (e) => {
@@ -57,6 +59,7 @@ $("#add-form").onsubmit = async (e) => {
 // ---------- detail view ----------
 async function select(name) {
   current = name;
+  clearInterval(trafficTimer);
   await loadDomains();
   const d = domains.find((x) => x.domain === name);
   if (!d) return;
@@ -425,6 +428,7 @@ const DEVICE = {
 
 async function openNetwork() {
   current = "__network__";
+  clearInterval(trafficTimer);
   loadDomains();                       // refresh sidebar active state
   const detail = $("#detail");
   detail.innerHTML = `<div class="card"><h1>My network map</h1>
@@ -530,7 +534,40 @@ function drawNetwork(r) {
   $("#net-view").querySelectorAll("[data-ip]").forEach((el) => el.onclick = () => show(el.dataset.ip));
 }
 
+// ================= Live traffic =================
+async function openTraffic() {
+  current = "__traffic__";
+  clearInterval(trafficTimer);
+  loadDomains();
+  $("#detail").innerHTML = `<div class="card"><h1>Live traffic</h1>
+    <p>What your own computer is talking to <b>right now</b> — which of your programs are connected to
+    which servers on the internet, and who owns each server.</p>
+    <p class="legal">This is connection information from <b>this computer only</b> — no packet contents and no
+    other machines. It answers "who is my PC talking to", not "what was sent". For deep packet inspection,
+    professionals use Wireshark; Aegis deliberately stays out of your data.</p></div>
+    <div id="traffic-view" class="hint">Reading your connections…</div>`;
+  const tick = async () => {
+    try { drawTraffic(await api("GET", "/api/traffic")); }
+    catch (e) { $("#traffic-view").innerHTML = `<div class="card" style="color:var(--crit)">${esc(e.message)}</div>`; }
+  };
+  await tick();
+  trafficTimer = setInterval(tick, 4000);   // refresh every 4 seconds
+}
+
+function drawTraffic(t) {
+  const v = $("#traffic-view");
+  if (!v) return;
+  v.innerHTML = `<div class="facts" style="margin-bottom:8px">${t.connections} active internet connection(s)
+      · updated ${new Date(t.captured_at).toLocaleTimeString()} · refreshes every 4s</div>
+    <table class="ports"><tr><th>Program</th><th>Server owner</th><th>IP address</th><th>Port(s)</th><th>Conns</th></tr>
+    ${t.flows.map((f) => `<tr>
+      <td><b>${esc(f.program)}</b></td><td>${esc(f.org)}</td>
+      <td class="b">${esc(f.remote_ip)}</td><td class="b">${f.ports.join(", ")}</td><td>${f.count}</td></tr>`).join("")
+      || `<tr><td colspan="5" class="hint">No connections to public servers right now.</td></tr>`}</table>`;
+}
+
 $("#netmap-btn").onclick = openNetwork;
+$("#traffic-btn").onclick = openTraffic;
 
 loadDomains().then(() => { if (domains[0]) select(domains[0].domain); });
 loadAlerts();

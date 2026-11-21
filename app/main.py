@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import jobs, monitor, netmap
+from app import jobs, monitor, netmap, traffic
 from app.db import Store
 from app.verification import (InvalidDomain, NotVerified, VerificationService, new_token,
                               normalize_domain, record_value)
@@ -305,6 +305,12 @@ def network_last(cidr: str):
     if not scan:
         raise HTTPException(status_code=404, detail="This network hasn't been scanned yet.")
     return scan
+
+
+@app.get("/api/traffic")
+def traffic_snapshot():
+    """What this computer is currently connected to (its own connection table)."""
+    return traffic.snapshot(store)
 
 
 @app.get("/api/domains/{domain}/scans")

@@ -61,6 +61,18 @@ stranger on your Wi-Fi.
   `start-admin.bat` (one Windows UAC prompt). Without admin you still get the
   full device list with makers and names.
 
+## Live traffic (what is my computer talking to?)
+
+Click **Live traffic** to see which of your own programs are connected to which
+servers on the internet right now, each labelled with who owns the server
+(Amazon, Google, Meta…). It reads **this computer's own** connection table
+(like Task Manager's network tab) and refreshes every few seconds.
+
+Honest scope: this is connection *metadata*, not packet contents — it shows that
+Chrome is talking to a Google server, not what was sent. Deep packet inspection
+is Wireshark's job; Aegis stays out of your data. Only your own machine is read;
+only remote IP addresses are sent to rdap.org for the owner labels.
+
 ## Deeper checks (safe Nmap scripts)
 
 When relevant ports are open, Aegis runs a **fixed allowlist of safe,
@@ -153,6 +165,7 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 | `app/main.py` | Web server: serves the dashboard and the API |
 | `app/verification.py` | Proves domain ownership via a DNS TXT token |
 | `app/scanner.py` | Resolves DNS, scans ports (Nmap or built-in), checks TLS and web headers |
+| `app/traffic.py` | Live view of this computer's connections to the internet, by app and owner |
 | `app/nse.py` | Safe Nmap scripts: TLS grade, SMBv1/signing, weak SSH, headers |
 | `app/jobs.py` | Background scan jobs with live progress (phase/percent/log) |
 | `app/netmap.py` | Maps your own LAN (device discovery, MAC vendors, OS, rogue-device flag) |
@@ -167,7 +180,7 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 | `app/db.py` | Saves domains, scan history and alerts in SQLite (`aegis.db`), with small migrations |
 | `app/static/` | The dashboard (HTML/CSS/JS) |
 | `tools/fake_service.py` | Opens a fake service on a local port (optionally with a banner), for demos |
-| `tests/` | 109 tests, including a real scan of a fake FTP server on localhost |
+| `tests/` | 114 tests, including a real scan of a fake FTP server on localhost |
 
 ## Roadmap
 
