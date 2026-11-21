@@ -82,15 +82,11 @@ def test_streaming_reports_progress(monkeypatch):
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch):
-    store = Store(str(tmp_path / "j.db"))
-    dns = {}
-    monkeypatch.setattr(main, "store", store)
-    monkeypatch.setattr(main, "verifier", VerificationService(store, txt_lookup=lambda d: dns.get(d, [])))
+def client(tmp_path, monkeypatch, make_client):
     monkeypatch.setattr(scanner, "scan", lambda d, report=None, **kw: (
         report and report(phase="Scanning ports", percent=40, line="probing")) or
         {"domain": d, "ips": ["127.0.0.1"], "open_ports": [], "findings": [], "score": 100})
-    c = TestClient(main.app)
+    c = make_client(Store(str(tmp_path / "j.db")))
     c.post("/api/domains", json={"domain": "localhost"})
     return c
 

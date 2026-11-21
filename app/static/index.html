@@ -9,14 +9,44 @@
 <body>
 <header class="top">
   <div class="brand"><span class="logo">◆</span> Aegis <small>attack-surface monitor</small></div>
-  <button id="theme" class="ghost" title="Light / dark">◐</button>
+  <div class="userbar">
+    <span id="whoami" class="hint"></span>
+    <button id="logout" class="ghost small hidden">Log out</button>
+    <button id="theme" class="ghost" title="Light / dark">◐</button>
+  </div>
 </header>
+
+<div id="auth-gate" class="auth-gate hidden">
+  <div class="auth-card">
+    <div class="brand"><span class="logo">◆</span> Aegis</div>
+    <p class="auth-sub">Attack-surface monitoring for your business. Each account's domains and
+      scans are private to that account.</p>
+    <div class="auth-tabs">
+      <button id="tab-login" class="auth-tab active">Log in</button>
+      <button id="tab-signup" class="auth-tab">Create account</button>
+    </div>
+    <form id="auth-form" class="auth-form">
+      <label id="org-row" class="hidden">Organisation name
+        <input id="auth-org" placeholder="Acme BV" autocomplete="organization">
+      </label>
+      <label>Email
+        <input id="auth-email" type="email" placeholder="you@company.nl" autocomplete="username" required>
+      </label>
+      <label>Password
+        <input id="auth-pass" type="password" placeholder="at least 8 characters" autocomplete="current-password" required>
+      </label>
+      <button id="auth-submit" type="submit">Log in</button>
+      <p id="auth-msg" class="msg"></p>
+    </form>
+  </div>
+</div>
 
 <main class="layout">
   <aside class="side">
     <div id="alerts" class="alerts"></div>
     <button id="netmap-btn" class="ghost navbtn">🖧  My network map</button>
     <button id="traffic-btn" class="ghost navbtn">📡  Live traffic</button>
+    <button id="audit-btn" class="ghost navbtn">📜  Audit log</button>
     <h2>Your domains</h2>
     <form id="add-form" class="add">
       <input id="add-input" placeholder="yourcompany.nl  or  localhost" autocomplete="off" required>

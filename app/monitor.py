@@ -29,7 +29,7 @@ from typing import Callable
 
 from app import cve, hosting, scanner, subdomains
 from app.changes import compare, describe, is_bad
-from app.db import Store, now
+from app.db import OrgStore, Store, now
 from app.verification import DNSUnavailable, VerificationService
 
 CHECK_EVERY_S = 15 * 60
@@ -175,12 +175,22 @@ def run_due(store: Store, verifier: VerificationService, interval: timedelta,
     return report
 
 
-class Scheduler:
-    """Background thread that runs run_due() at start and then every CHECK_EVERY_S."""
+def run_due_all_orgs(store: Store, interval: timedelta, force: bool = False) -> list[dict]:
+    """Run the due scans for EVERY organisation. Each org is scanned through its own
+    OrgStore + verifier, so the scheduler respects tenant isolation."""
+    report = []
+    for org_id in store.org_ids_with_domains():
+        org_store = OrgStore(store, org_id)
+        report += run_due(org_store, VerificationService(org_store), interval, force)
+    return report
 
-    def __init__(self, get_store: Callable[[], Store], get_verifier: Callable[[], VerificationService],
-                 interval: timedelta, check_every_s: float = CHECK_EVERY_S):
-        self._get_store, self._get_verifier = get_store, get_verifier
+
+class Scheduler:
+    """Background thread that runs the due scans at start and then every CHECK_EVERY_S."""
+
+    def __init__(self, get_store: Callable[[], Store], interval: timedelta,
+                 check_every_s: float = CHECK_EVERY_S):
+        self._get_store = get_store
         self.interval, self.check_every_s = interval, check_every_s
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, name="aegis-monitor", daemon=True)
@@ -196,7 +206,7 @@ class Scheduler:
     def _loop(self) -> None:
         while not self._stop.is_set():
             try:
-                run_due(self._get_store(), self._get_verifier(), self.interval)
+                run_due_all_orgs(self._get_store(), self.interval)
             except Exception as e:  # never let one bad scan kill the scheduler
                 log(f"error: {e!r}")
             self._stop.wait(self.check_every_s)

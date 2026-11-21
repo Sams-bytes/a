@@ -83,12 +83,10 @@ def test_certificate_logs_offline_still_uses_dns():
 
 # ---- API + rules ------------------------------------------------------------------
 @pytest.fixture
-def client(tmp_path, monkeypatch):
+def client(tmp_path, make_client):
     store = Store(str(tmp_path / "s.db"))
     dns = {}
-    monkeypatch.setattr(main, "store", store)
-    monkeypatch.setattr(main, "verifier", VerificationService(store, txt_lookup=lambda d: dns.get(d, [])))
-    c = TestClient(main.app)
+    c = make_client(store, txt_lookup=lambda d: dns.get(d, []))
     d = c.post("/api/domains", json={"domain": "dam-bv.com"}).json()
     dns["dam-bv.com"] = [d["record_value"]]
     c.post("/api/domains/dam-bv.com/verify")
@@ -177,7 +175,9 @@ def test_child_ownership_follows_parent(client):
     store = client.store
     store.save_subdomains("dam-bv.com", [WWW])
     client.post("/api/domains/dam-bv.com/subdomains/www.dam-bv.com/monitor")
-    v = main.verifier
+    from app.db import OrgStore
+    from app.verification import VerificationService
+    v = VerificationService(OrgStore(client.store, 1), txt_lookup=lambda d: client.dns.get(d, []))
     assert v.reverify("www.dam-bv.com") is True
     client.dns["dam-bv.com"] = []                             # parent's TXT record removed
     assert v.reverify("www.dam-bv.com") is False              # -> child loses permission too

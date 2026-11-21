@@ -57,8 +57,8 @@ def test_snapshot_groups_public_only(monkeypatch):
     assert all("node" not in f["program"] for f in snap["flows"])
 
 
-def test_endpoint(tmp_path, monkeypatch):
-    monkeypatch.setattr(main, "store", Store(str(tmp_path / "t.db")))
+def test_endpoint(tmp_path, monkeypatch, make_client):
     monkeypatch.setattr(main.traffic, "snapshot", lambda store: {"captured_at": "now", "flows": [], "connections": 0})
-    r = TestClient(main.app).get("/api/traffic").json()
+    c = make_client(Store(str(tmp_path / "t.db")))
+    r = c.get("/api/traffic").json()
     assert r["connections"] == 0 and r["flows"] == []

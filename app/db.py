@@ -89,6 +89,15 @@ CREATE TABLE IF NOT EXISTS memberships (    -- which user belongs to which org, 
     created_at  TEXT NOT NULL,
     PRIMARY KEY (org_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS audit_events (   -- who did what, when: a tamper-evident trail per org
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id      INTEGER NOT NULL,
+    user_id     INTEGER,
+    at          TEXT NOT NULL,
+    action      TEXT NOT NULL,          -- e.g. login, scan, add_domain, delete_domain
+    target      TEXT,                   -- what it acted on (a domain, a project…)
+    detail      TEXT                    -- optional extra note
+);
 """
 
 # Migrations: columns added after the first version of the schema.
@@ -455,6 +464,24 @@ class Store:
     def list_orgs(self) -> list[dict]:
         with self._lock:
             rows = self._conn.execute("SELECT * FROM orgs ORDER BY id").fetchall()
+        return [dict(r) for r in rows]
+
+    # ---- audit log -----------------------------------------------------
+    def add_audit(self, org_id: int, user_id: int | None, action: str,
+                  target: str | None = None, detail: str | None = None) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO audit_events(org_id, user_id, at, action, target, detail) VALUES (?,?,?,?,?,?)",
+                (org_id, user_id, now(), action, target, detail))
+            self._conn.commit()
+
+    def list_audit(self, org_id: int, limit: int = 100) -> list[dict]:
+        """Newest first, with the acting user's email joined in."""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT a.*, u.email AS user_email FROM audit_events a
+                   LEFT JOIN users u ON u.id = a.user_id
+                   WHERE a.org_id=? ORDER BY a.id DESC LIMIT ?""", (org_id, limit)).fetchall()
         return [dict(r) for r in rows]
 
 

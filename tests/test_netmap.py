@@ -128,12 +128,10 @@ def test_run_rejects_non_private():
 
 # ---- API gate --------------------------------------------------------------------
 @pytest.fixture
-def client(tmp_path, monkeypatch):
-    from fastapi.testclient import TestClient
+def client(tmp_path, monkeypatch, make_client):
     import app.main as main
-    monkeypatch.setattr(main, "store", Store(str(tmp_path / "a.db")))
     monkeypatch.setattr(main.netmap, "find_nmap", lambda: "nmap")
-    return TestClient(main.app)
+    return make_client(Store(str(tmp_path / "a.db")))
 
 
 def test_scan_requires_confirmation_and_private_range(client, monkeypatch):

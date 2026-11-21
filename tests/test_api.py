@@ -4,9 +4,7 @@ import threading
 import pytest
 from fastapi.testclient import TestClient
 
-import app.main as main
 from app.db import Store
-from app.verification import VerificationService
 
 
 class FakeDNS(dict):
@@ -15,12 +13,9 @@ class FakeDNS(dict):
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch):
-    store = Store(str(tmp_path / "t.db"))
+def client(tmp_path, make_client):
     dns = FakeDNS()
-    monkeypatch.setattr(main, "store", store)
-    monkeypatch.setattr(main, "verifier", VerificationService(store, txt_lookup=dns))
-    c = TestClient(main.app)
+    c = make_client(Store(str(tmp_path / "t.db")), txt_lookup=dns)
     c.dns = dns
     return c
 

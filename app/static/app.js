@@ -6,6 +6,7 @@ const api = async (method, path, body) => {
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401) { showGate(); throw new Error(data.detail || "Please log in."); }
   if (!res.ok) throw new Error(data.detail || `Error ${res.status}`);
   return data;
 };
@@ -568,7 +569,77 @@ function drawTraffic(t) {
 
 $("#netmap-btn").onclick = openNetwork;
 $("#traffic-btn").onclick = openTraffic;
+$("#audit-btn").onclick = openAudit;
 
-loadDomains().then(() => { if (domains[0]) select(domains[0].domain); });
-loadAlerts();
+// ---------- audit log ----------
+async function openAudit() {
+  current = null;
+  loadDomains();
+  const detail = $("#detail");
+  detail.innerHTML = `<div class="card"><h1>📜 Audit log</h1>
+    <p class="hint">Every important action in your organisation, newest first. This is the kind of
+    tamper-evident trail NIS2 and auditors expect.</p><div id="audit-body">Loading…</div></div>`;
+  try {
+    const rows = await api("GET", "/api/audit");
+    $("#audit-body").innerHTML = rows.length ? `<table class="ports">
+      <tr><th>When</th><th>Who</th><th>Action</th><th>Target</th></tr>
+      ${rows.map((r) => `<tr><td class="b">${new Date(r.at).toLocaleString()}</td>
+        <td>${esc(r.user_email || "—")}</td><td><b>${esc(r.action)}</b></td>
+        <td>${esc(r.target || "")}</td></tr>`).join("")}</table>`
+      : `<p class="hint">No events yet.</p>`;
+  } catch (e) { $("#audit-body").textContent = e.message; }
+}
+
+// ---------- authentication ----------
+let signupMode = false;
+const gate = $("#auth-gate");
+
+function showGate() {
+  gate.classList.remove("hidden");
+  $("#logout").classList.add("hidden");
+  $("#whoami").textContent = "";
+}
+
+function setAuthMode(signup) {
+  signupMode = signup;
+  $("#tab-login").classList.toggle("active", !signup);
+  $("#tab-signup").classList.toggle("active", signup);
+  $("#org-row").classList.toggle("hidden", !signup);
+  $("#auth-submit").textContent = signup ? "Create account" : "Log in";
+  $("#auth-pass").autocomplete = signup ? "new-password" : "current-password";
+  $("#auth-msg").textContent = "";
+}
+$("#tab-login").onclick = () => setAuthMode(false);
+$("#tab-signup").onclick = () => setAuthMode(true);
+
+$("#auth-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const body = { email: $("#auth-email").value, password: $("#auth-pass").value };
+  if (signupMode) body.org_name = $("#auth-org").value || undefined;
+  try {
+    const me = await api("POST", signupMode ? "/api/signup" : "/api/login", body);
+    gate.classList.add("hidden");
+    startApp(me);
+  } catch (err) { $("#auth-msg").textContent = err.message; }
+});
+
+$("#logout").onclick = async () => {
+  try { await api("POST", "/api/logout"); } catch {}
+  location.reload();
+};
+
+function startApp(me) {
+  $("#whoami").textContent = `${me.email} · ${me.org_name || ""}`;
+  $("#logout").classList.remove("hidden");
+  loadDomains().then(() => { if (domains[0]) select(domains[0].domain); });
+  loadAlerts();
+}
+
+// On load: are we already logged in? If not, show the login screen.
+(async () => {
+  try {
+    const me = await api("GET", "/api/me");
+    startApp(me);
+  } catch { showGate(); }
+})();
 setInterval(() => loadAlerts().catch(() => {}), 60000); // pick up alerts from automatic scans

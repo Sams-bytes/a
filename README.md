@@ -14,9 +14,28 @@ Attack-surface monitoring for EU small businesses (NIS2 / GDPR focused).
 
 Close the black window to stop Aegis. Your domains and scans are saved in `aegis.db`.
 
-Try it right away: add `localhost` (your own computer is always allowed) and press **Run scan**.
+First run: **create an account** (email + password). Your domains and scans are
+private to your organisation — another account cannot see them. Then add
+`localhost` (your own computer is always allowed) and press **Run scan**.
 
 Developers: `python -m pytest -q` runs the tests; the API docs are at http://127.0.0.1:8000/docs.
+
+## Accounts and organisations (multi-tenant)
+
+Aegis has customer accounts. You sign up with an email and password (the password
+is never stored — only a one-way scrypt hash), and your login is remembered with
+a signed session cookie. Every account belongs to an **organisation**, and all
+your domains, scans, alerts and network data are scoped to it: one organisation
+can never see or touch another's data, enforced in the database layer (not the
+UI). An **audit log** records every important action (login, add/verify/scan/
+delete a domain) for your organisation.
+
+This is the "Commercial Foundation" (Phase 1) of a larger platform plan. It runs
+on SQLite + signed-cookie sessions with no extra setup; a production EU
+deployment would swap in PostgreSQL and SSO behind the same `Store` interface.
+
+- Settings: `AEGIS_SECRET` (session-signing key; auto-generated and stored in
+  `aegis.db` if unset, so logins survive restarts).
 
 ## How domain verification works
 
@@ -163,6 +182,7 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 | `start.bat` | One-click launcher for Windows |
 | `start-admin.bat` | Launch as admin (for the network map's deep scan) |
 | `app/main.py` | Web server: serves the dashboard and the API |
+| `app/accounts.py` | Customer accounts: scrypt passwords, signed-cookie sessions, organisations |
 | `app/verification.py` | Proves domain ownership via a DNS TXT token |
 | `app/scanner.py` | Resolves DNS, scans ports (Nmap or built-in), checks TLS and web headers |
 | `app/traffic.py` | Live view of this computer's connections to the internet, by app and owner |
@@ -180,7 +200,7 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 | `app/db.py` | Saves domains, scan history and alerts in SQLite (`aegis.db`), with small migrations |
 | `app/static/` | The dashboard (HTML/CSS/JS) |
 | `tools/fake_service.py` | Opens a fake service on a local port (optionally with a banner), for demos |
-| `tests/` | 114 tests, including a real scan of a fake FTP server on localhost |
+| `tests/` | 137 tests, including a real scan of a fake FTP server on localhost |
 
 ## Roadmap
 
@@ -191,6 +211,6 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 - [x] Weekly scans + change alerts in the dashboard
 - [ ] Email delivery for alerts
 - [x] CVE matching on software versions (built-in list + live NVD)
-- [ ] Customer accounts / login
+- [x] Customer accounts / login + organisations (tenant isolation, audit log)
 - [ ] NIS2 / GDPR readiness mapping
 - [ ] Phishing-awareness training module
