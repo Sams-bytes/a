@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import jobs, monitor, netmap, traffic
+from app import jobs, monitor, netmap, risk, traffic
 from app.accounts import SESSION_COOKIE, Accounts, AuthError
 from app.db import OrgStore, Store
 from app.verification import (InvalidDomain, NotVerified, VerificationService, lookup_txt,
@@ -107,6 +107,13 @@ class ProjectIn(BaseModel):
 
 class ProjectAssign(BaseModel):
     project_id: int | None = None   # null detaches the domain from any project
+
+
+class FindingStatusIn(BaseModel):
+    domain: str
+    key: str
+    status: str                     # open | fixed | accepted | false_positive
+    note: str | None = None
 
 
 def scan_mode(row: dict) -> str:
@@ -227,6 +234,47 @@ def create_project(body: ProjectIn, ctx: Ctx = Depends(get_ctx)):
     p = ctx.store.create_project(name, body.authorized_by, body.scope_note)
     ctx.audit("create_project", name, body.authorized_by)
     return p
+
+
+# ---- exposure management: all findings, risk-ranked, with remediation status --
+@app.get("/api/findings")
+def all_findings(ctx: Ctx = Depends(get_ctx)):
+    """Every finding across this org's domains, scored by risk and tagged with its
+    remediation status. The exposure-management worklist."""
+    rows = []
+    counts = {"open": 0, "fixed": 0, "accepted": 0, "false_positive": 0}
+    for d in ctx.store.list_domains():
+        scan = ctx.store.latest_scan(d["domain"])
+        if not scan:
+            continue
+        statuses = ctx.store.finding_statuses(d["domain"])
+        for f in scan["result"].get("findings", []):
+            if f.get("severity") == "info":
+                continue                         # the worklist is about real risk, not notes
+            st = statuses.get(f["key"], {"status": "open", "note": None})
+            score = risk.risk_score(f)
+            rows.append({
+                "domain": d["domain"], "key": f["key"], "title": f["title"],
+                "severity": f["severity"], "cvss": f.get("cvss"), "epss": f.get("epss"),
+                "kev": any(c.get("kev") for c in f.get("cves", [])),
+                "risk": score, "risk_tier": risk.risk_tier(score),
+                "status": st["status"], "note": st.get("note"), "scan_id": scan["id"],
+            })
+            counts[st["status"]] = counts.get(st["status"], 0) + 1
+    rows.sort(key=lambda r: (r["status"] != "open", -r["risk"]))
+    return {"findings": rows, "counts": counts}
+
+
+@app.post("/api/findings/status")
+def set_finding_status(body: FindingStatusIn, ctx: Ctx = Depends(get_ctx)):
+    if body.status not in risk.STATUSES:
+        raise HTTPException(status_code=422, detail=f"status must be one of {', '.join(risk.STATUSES)}")
+    domain = normalize_domain(body.domain)
+    if not ctx.store.get_domain(domain):
+        raise HTTPException(status_code=404, detail="Unknown domain.")
+    ctx.store.set_finding_status(domain, body.key, body.status, body.note)
+    ctx.audit("finding_status", f"{domain} {body.key}", body.status)
+    return {"ok": True}
 
 
 @app.post("/api/domains/{domain}/project")

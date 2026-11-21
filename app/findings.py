@@ -366,8 +366,20 @@ def build_findings(scan: dict) -> list[dict]:
         out = [_as_local(f, open_ports[(f.get("proto") or "tcp", f["port"])]["service"])
                if is_port_finding(f) else f for f in out]
 
+    # Every finding needs a stable key so its remediation status can be tracked
+    # across scans. CVE/NSE findings already set one; give the rest a sensible default.
+    for f in out:
+        f.setdefault("key", f"{f.get('kind', 'rule')}:{f.get('proto', 'tcp')}:{f.get('port')}:{_slug(f['title'])}")
+
     out.sort(key=lambda f: (SEVERITY_ORDER[f["severity"]], -f["cvss"]))
     return out
+
+
+def _slug(title: str) -> str:
+    """A short, stable id from a finding title (drops the changing numbers)."""
+    import re
+    base = re.sub(r"\d+", "", title.lower())          # strip version/day numbers so the key is stable
+    return re.sub(r"[^a-z]+", "-", base).strip("-")[:40]
 
 
 def score_findings(findings: list[dict]) -> int:

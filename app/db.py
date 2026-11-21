@@ -98,6 +98,15 @@ CREATE TABLE IF NOT EXISTS projects (       -- an assessment engagement: a scope
     authorized_at TEXT,
     created_at    TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS finding_status (  -- remediation workflow: the state of one finding
+    org_id      INTEGER NOT NULL,
+    domain      TEXT NOT NULL,
+    finding_key TEXT NOT NULL,
+    status      TEXT NOT NULL,          -- open | fixed | accepted | false_positive
+    note        TEXT,
+    updated_at  TEXT NOT NULL,
+    PRIMARY KEY (org_id, domain, finding_key)
+);
 CREATE TABLE IF NOT EXISTS audit_events (   -- who did what, when: a tamper-evident trail per org
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     org_id      INTEGER NOT NULL,
@@ -503,6 +512,24 @@ class Store:
                    FROM projects p WHERE p.org_id=? ORDER BY p.id DESC""", (org_id,)).fetchall()
         return [dict(r) for r in rows]
 
+    # ---- remediation status --------------------------------------------
+    def set_finding_status(self, domain: str, finding_key: str, status: str,
+                           note: str | None = None, org_id: int = DEFAULT_ORG) -> None:
+        with self._lock:
+            self._conn.execute(
+                """INSERT OR REPLACE INTO finding_status(org_id, domain, finding_key, status, note, updated_at)
+                   VALUES (?,?,?,?,?,?)""", (org_id, domain, finding_key, status, note, now()))
+            self._conn.commit()
+
+    def finding_statuses(self, domain: str, org_id: int = DEFAULT_ORG) -> dict:
+        """{finding_key: {status, note, updated_at}} for one domain."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT finding_key, status, note, updated_at FROM finding_status WHERE org_id=? AND domain=?",
+                (org_id, domain)).fetchall()
+        return {r["finding_key"]: {"status": r["status"], "note": r["note"], "updated_at": r["updated_at"]}
+                for r in rows}
+
     def set_domain_project(self, domain: str, project_id: int | None, org_id: int = DEFAULT_ORG) -> None:
         with self._lock:
             # Only assign a project that belongs to the same org (never cross-org).
@@ -553,6 +580,7 @@ class OrgStore:
         "latest_scan", "add_alert", "list_alerts", "save_netscan", "get_netscan",
         "save_devices", "mark_alerts_seen",
         "create_project", "get_project", "list_projects", "set_domain_project",
+        "set_finding_status", "finding_statuses",
     }
 
     def __init__(self, store: Store, org_id: int):

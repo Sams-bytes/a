@@ -597,6 +597,51 @@ $("#netmap-btn").onclick = openNetwork;
 $("#traffic-btn").onclick = openTraffic;
 $("#audit-btn").onclick = openAudit;
 $("#projects-btn").onclick = openProjects;
+$("#findings-btn").onclick = openFindings;
+
+// ---------- findings worklist (exposure management, risk-ranked) ----------
+const STATUS_LABELS = { open: "Open", fixed: "Fixed", accepted: "Accepted (risk)", false_positive: "False positive" };
+
+async function openFindings() {
+  current = null;
+  loadDomains();
+  const detail = $("#detail");
+  detail.innerHTML = `<div class="card"><h1>⚠️ Findings — risk worklist</h1>
+    <p class="hint">Every real finding across all your domains, ordered by <b>risk = how bad × how likely</b>
+    (CVSS impact combined with EPSS/KEV likelihood). Fix top-down. Mark each one as you deal with it.</p>
+    <div id="findings-body">Loading…</div></div>`;
+  await renderFindings();
+}
+
+async function renderFindings() {
+  const box = $("#findings-body");
+  if (!box) return;
+  let data;
+  try { data = await api("GET", "/api/findings"); }
+  catch (e) { box.textContent = e.message; return; }
+  const c = data.counts;
+  const summary = `<div class="facts" style="margin-bottom:10px">
+    <b>${c.open}</b> open · <b>${c.fixed}</b> fixed · <b>${c.accepted}</b> accepted · <b>${c.false_positive}</b> false positive</div>`;
+  if (!data.findings.length) { box.innerHTML = summary + `<p class="hint">No findings yet. Run a scan on a domain.</p>`; return; }
+  const sel = (f) => `<select class="fstatus" data-domain="${esc(f.domain)}" data-key="${esc(f.key)}">
+    ${Object.entries(STATUS_LABELS).map(([v, l]) => `<option value="${v}" ${f.status === v ? "selected" : ""}>${l}</option>`).join("")}
+    </select>`;
+  box.innerHTML = summary + `<table class="ports">
+    <tr><th>Risk</th><th>Finding</th><th>Domain</th><th>Signals</th><th>Status</th></tr>
+    ${data.findings.map((f) => `<tr class="${f.status !== "open" ? "done-row" : ""}">
+      <td><span class="risk-badge ${f.risk_tier}">${f.risk}</span></td>
+      <td><b>${esc(f.title)}</b></td>
+      <td class="b">${esc(f.domain)}</td>
+      <td>CVSS ${f.cvss ?? "?"}${f.epss != null ? ` · ${Math.round(f.epss * 100)}% EPSS` : ""}${f.kev ? ` · <span class="kev">KEV</span>` : ""}</td>
+      <td>${sel(f)}</td></tr>`).join("")}</table>`;
+  box.querySelectorAll(".fstatus").forEach((s) => s.onchange = async (e) => {
+    try {
+      await api("POST", "/api/findings/status",
+        { domain: e.target.dataset.domain, key: e.target.dataset.key, status: e.target.value });
+      renderFindings();
+    } catch (err) { alert(err.message); }
+  });
+}
 
 // ---------- projects (assessment engagements) ----------
 async function openProjects() {
