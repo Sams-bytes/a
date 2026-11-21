@@ -101,7 +101,21 @@ _MIGRATIONS = [
     ("domains", "hosting", "TEXT NOT NULL DEFAULT 'auto'"), # auto / own / shared
     ("domains", "hosting_provider", "TEXT"),                # e.g. 'Hostinger'
     ("domains", "hosting_confirmed_at", "TEXT"),            # when the owner said "my own server"
+    # Tenant isolation (Phase 1): every piece of customer data belongs to one org.
+    # DEFAULT 1 migrates any data from the pre-accounts version into "org 1"; the
+    # first organisation created also gets id 1, so that first customer inherits it.
+    ("domains", "org_id", "INTEGER NOT NULL DEFAULT 1"),
+    ("scans", "org_id", "INTEGER NOT NULL DEFAULT 1"),
+    ("alerts", "org_id", "INTEGER NOT NULL DEFAULT 1"),
+    ("subdomains", "org_id", "INTEGER NOT NULL DEFAULT 1"),
+    ("netscans", "org_id", "INTEGER NOT NULL DEFAULT 1"),
+    ("known_devices", "org_id", "INTEGER NOT NULL DEFAULT 1"),
 ]
+
+# Single-tenant / test convenience: calls that don't name an org act on org 1.
+# Application code always passes an explicit org_id (via OrgStore), so this default
+# never widens access in production - it only keeps single-org callers simple.
+DEFAULT_ORG = 1
 
 
 def now() -> str:
@@ -125,101 +139,130 @@ class Store:
             self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     # ---- domains -------------------------------------------------------
-    def get_domain(self, domain: str) -> dict | None:
+    # Every method takes an org_id and filters on it: a domain is reachable only
+    # through the org that owns it. org_id defaults to DEFAULT_ORG for single-org
+    # callers; application code passes it explicitly (OrgStore).
+    def get_domain(self, domain: str, org_id: int = DEFAULT_ORG) -> dict | None:
         with self._lock:
-            row = self._conn.execute("SELECT * FROM domains WHERE domain=?", (domain,)).fetchone()
+            row = self._conn.execute(
+                "SELECT * FROM domains WHERE domain=? AND org_id=?", (domain, org_id)).fetchone()
         return dict(row) if row else None
 
-    def add_domain(self, domain: str, token: str, parent: str | None = None) -> dict:
+    def add_domain(self, domain: str, token: str, parent: str | None = None,
+                   org_id: int = DEFAULT_ORG) -> dict:
         with self._lock:
+            # A domain belongs to one organisation at a time. Refuse to re-home a
+            # domain another org already registered (would otherwise leak/overwrite).
+            owner = self._conn.execute("SELECT org_id FROM domains WHERE domain=?", (domain,)).fetchone()
+            if owner and owner["org_id"] != org_id:
+                raise ValueError(f"{domain} is already registered to another organisation.")
             self._conn.execute(
-                "INSERT OR REPLACE INTO domains(domain, token, created_at, verified_at, parent) VALUES (?,?,?,NULL,?)",
-                (domain, token, now(), parent),
+                """INSERT OR REPLACE INTO domains(domain, token, created_at, verified_at, parent, org_id)
+                   VALUES (?,?,?,NULL,?,?)""",
+                (domain, token, now(), parent, org_id),
             )
             self._conn.commit()
-        return self.get_domain(domain)
+        return self.get_domain(domain, org_id)
 
     def set_hosting(self, domain: str, hosting: str | None = None, provider: str | None = None,
-                    confirmed: bool = False) -> None:
+                    confirmed: bool = False, org_id: int = DEFAULT_ORG) -> None:
         """hosting: 'auto' / 'own' / 'shared' (None = leave as is); provider: what RDAP said."""
         with self._lock:
             if hosting is not None:
-                self._conn.execute("UPDATE domains SET hosting=?, hosting_confirmed_at=? WHERE domain=?",
-                                   (hosting, now() if confirmed else None, domain))
+                self._conn.execute("UPDATE domains SET hosting=?, hosting_confirmed_at=? WHERE domain=? AND org_id=?",
+                                   (hosting, now() if confirmed else None, domain, org_id))
             if provider is not None:
-                self._conn.execute("UPDATE domains SET hosting_provider=? WHERE domain=?", (provider, domain))
+                self._conn.execute("UPDATE domains SET hosting_provider=? WHERE domain=? AND org_id=?",
+                                   (provider, domain, org_id))
             self._conn.commit()
 
-    def mark_verified(self, domain: str) -> None:
+    def mark_verified(self, domain: str, org_id: int = DEFAULT_ORG) -> None:
         with self._lock:
-            self._conn.execute("UPDATE domains SET verified_at=? WHERE domain=?", (now(), domain))
+            self._conn.execute("UPDATE domains SET verified_at=? WHERE domain=? AND org_id=?", (now(), domain, org_id))
             self._conn.commit()
 
-    def mark_unverified(self, domain: str) -> None:
+    def mark_unverified(self, domain: str, org_id: int = DEFAULT_ORG) -> None:
         with self._lock:
-            self._conn.execute("UPDATE domains SET verified_at=NULL WHERE domain=?", (domain,))
+            self._conn.execute("UPDATE domains SET verified_at=NULL WHERE domain=? AND org_id=?", (domain, org_id))
             self._conn.commit()
 
-    def set_monitor(self, domain: str, on: bool) -> None:
+    def set_monitor(self, domain: str, on: bool, org_id: int = DEFAULT_ORG) -> None:
         with self._lock:
-            self._conn.execute("UPDATE domains SET monitor=? WHERE domain=?", (1 if on else 0, domain))
+            self._conn.execute("UPDATE domains SET monitor=? WHERE domain=? AND org_id=?",
+                               (1 if on else 0, domain, org_id))
             self._conn.commit()
 
-    def list_domains(self) -> list[dict]:
+    def list_domains(self, org_id: int = DEFAULT_ORG) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
                 """SELECT d.*, s.score AS last_score, s.finished_at AS last_scan
                    FROM domains d
-                   LEFT JOIN scans s ON s.id = (SELECT MAX(id) FROM scans WHERE domain=d.domain)
-                   ORDER BY d.created_at DESC"""
+                   LEFT JOIN scans s ON s.id = (SELECT MAX(id) FROM scans WHERE domain=d.domain AND org_id=d.org_id)
+                   WHERE d.org_id=?
+                   ORDER BY d.created_at DESC""", (org_id,)
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def monitored_domains(self) -> list[dict]:
+    def monitored_domains(self, org_id: int = DEFAULT_ORG) -> list[dict]:
         """Verified domains with monitoring on, plus when they were last scanned."""
-        return [d for d in self.list_domains() if d["verified_at"] and d["monitor"]]
+        return [d for d in self.list_domains(org_id) if d["verified_at"] and d["monitor"]]
 
-    def delete_domain(self, domain: str) -> None:
+    def all_monitored(self) -> list[dict]:
+        """Every monitored domain across ALL orgs (for the background scheduler)."""
+        with self._lock:
+            org_ids = [r["org_id"] for r in self._conn.execute("SELECT DISTINCT org_id FROM domains")]
+        out = []
+        for oid in org_ids:
+            out += self.monitored_domains(oid)
+        return out
+
+    def org_ids_with_domains(self) -> list[int]:
+        with self._lock:
+            return [r["org_id"] for r in self._conn.execute("SELECT DISTINCT org_id FROM domains ORDER BY org_id")]
+
+    def delete_domain(self, domain: str, org_id: int = DEFAULT_ORG) -> None:
         """Delete a domain, its scans and alerts - and its monitored subdomains too."""
         with self._lock:
-            children = [r["domain"] for r in self._conn.execute("SELECT domain FROM domains WHERE parent=?", (domain,))]
+            children = [r["domain"] for r in self._conn.execute(
+                "SELECT domain FROM domains WHERE parent=? AND org_id=?", (domain, org_id))]
             for d in [*children, domain]:
-                self._conn.execute("DELETE FROM alerts WHERE domain=?", (d,))
-                self._conn.execute("DELETE FROM scans WHERE domain=?", (d,))
-                self._conn.execute("DELETE FROM domains WHERE domain=?", (d,))
-            self._conn.execute("DELETE FROM subdomains WHERE parent=?", (domain,))
+                self._conn.execute("DELETE FROM alerts WHERE domain=? AND org_id=?", (d, org_id))
+                self._conn.execute("DELETE FROM scans WHERE domain=? AND org_id=?", (d, org_id))
+                self._conn.execute("DELETE FROM domains WHERE domain=? AND org_id=?", (d, org_id))
+            self._conn.execute("DELETE FROM subdomains WHERE parent=? AND org_id=?", (domain, org_id))
             self._conn.commit()
 
     # ---- discovered subdomains -----------------------------------------
-    def save_subdomains(self, parent: str, rows: list[dict]) -> list[str]:
+    def save_subdomains(self, parent: str, rows: list[dict], org_id: int = DEFAULT_ORG) -> list[str]:
         """Insert/update discovered subdomains. Returns names seen for the FIRST time."""
         new = []
         with self._lock:
             for r in rows:
-                exists = self._conn.execute("SELECT 1 FROM subdomains WHERE parent=? AND name=?",
-                                            (parent, r["name"])).fetchone()
+                exists = self._conn.execute("SELECT 1 FROM subdomains WHERE parent=? AND name=? AND org_id=?",
+                                            (parent, r["name"], org_id)).fetchone()
                 if exists:
                     self._conn.execute(
                         """UPDATE subdomains SET last_seen=?, sources=?, ips=?, cname=?, provider=?, status=?
-                           WHERE parent=? AND name=?""",
+                           WHERE parent=? AND name=? AND org_id=?""",
                         (now(), json.dumps(r["sources"]), json.dumps(r["ips"]), r.get("cname"),
-                         r.get("provider"), r["status"], parent, r["name"]))
+                         r.get("provider"), r["status"], parent, r["name"], org_id))
                 else:
                     new.append(r["name"])
                     self._conn.execute(
-                        """INSERT INTO subdomains(parent, name, first_seen, last_seen, sources, ips, cname, provider, status)
-                           VALUES (?,?,?,?,?,?,?,?,?)""",
+                        """INSERT INTO subdomains(parent, name, first_seen, last_seen, sources, ips, cname, provider, status, org_id)
+                           VALUES (?,?,?,?,?,?,?,?,?,?)""",
                         (parent, r["name"], now(), now(), json.dumps(r["sources"]), json.dumps(r["ips"]),
-                         r.get("cname"), r.get("provider"), r["status"]))
+                         r.get("cname"), r.get("provider"), r["status"], org_id))
             self._conn.commit()
         return new
 
-    def list_subdomains(self, parent: str) -> list[dict]:
+    def list_subdomains(self, parent: str, org_id: int = DEFAULT_ORG) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
                 """SELECT s.*, d.domain IS NOT NULL AS monitored FROM subdomains s
-                   LEFT JOIN domains d ON d.domain = s.name AND d.parent = s.parent
-                   WHERE s.parent=? ORDER BY s.status != 'takeover_risk', s.name""", (parent,)).fetchall()
+                   LEFT JOIN domains d ON d.domain = s.name AND d.parent = s.parent AND d.org_id = s.org_id
+                   WHERE s.parent=? AND s.org_id=? ORDER BY s.status != 'takeover_risk', s.name""",
+                (parent, org_id)).fetchall()
         out = []
         for r in rows:
             d = dict(r)
@@ -228,52 +271,55 @@ class Store:
         return out
 
     # ---- scans ---------------------------------------------------------
-    def add_scan(self, domain: str, started_at: str, result: dict, source: str = "manual") -> int:
+    def add_scan(self, domain: str, started_at: str, result: dict, source: str = "manual",
+                 org_id: int = DEFAULT_ORG) -> int:
         with self._lock:
             cur = self._conn.execute(
-                "INSERT INTO scans(domain, started_at, finished_at, score, result, source) VALUES (?,?,?,?,?,?)",
-                (domain, started_at, now(), result["score"], json.dumps(result), source),
+                "INSERT INTO scans(domain, started_at, finished_at, score, result, source, org_id) VALUES (?,?,?,?,?,?,?)",
+                (domain, started_at, now(), result["score"], json.dumps(result), source, org_id),
             )
             self._conn.commit()
             return cur.lastrowid
 
-    def list_scans(self, domain: str) -> list[dict]:
+    def list_scans(self, domain: str, org_id: int = DEFAULT_ORG) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id, domain, started_at, finished_at, score, source FROM scans WHERE domain=? ORDER BY id DESC",
-                (domain,),
+                "SELECT id, domain, started_at, finished_at, score, source FROM scans WHERE domain=? AND org_id=? ORDER BY id DESC",
+                (domain, org_id),
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_scan(self, scan_id: int) -> dict | None:
+    def get_scan(self, scan_id: int, org_id: int = DEFAULT_ORG) -> dict | None:
         with self._lock:
-            row = self._conn.execute("SELECT * FROM scans WHERE id=?", (scan_id,)).fetchone()
+            row = self._conn.execute("SELECT * FROM scans WHERE id=? AND org_id=?", (scan_id, org_id)).fetchone()
         if not row:
             return None
         d = dict(row)
         d["result"] = json.loads(d["result"])
         return d
 
-    def latest_scan(self, domain: str) -> dict | None:
+    def latest_scan(self, domain: str, org_id: int = DEFAULT_ORG) -> dict | None:
         with self._lock:
-            row = self._conn.execute("SELECT MAX(id) AS id FROM scans WHERE domain=?", (domain,)).fetchone()
-        return self.get_scan(row["id"]) if row and row["id"] else None
+            row = self._conn.execute("SELECT MAX(id) AS id FROM scans WHERE domain=? AND org_id=?",
+                                     (domain, org_id)).fetchone()
+        return self.get_scan(row["id"], org_id) if row and row["id"] else None
 
     # ---- alerts --------------------------------------------------------
     def add_alert(self, domain: str, level: str, title: str, details: list[str],
-                  scan_id: int | None = None) -> int:
+                  scan_id: int | None = None, org_id: int = DEFAULT_ORG) -> int:
         with self._lock:
             cur = self._conn.execute(
-                "INSERT INTO alerts(domain, scan_id, created_at, level, title, details) VALUES (?,?,?,?,?,?)",
-                (domain, scan_id, now(), level, title, json.dumps(details)),
+                "INSERT INTO alerts(domain, scan_id, created_at, level, title, details, org_id) VALUES (?,?,?,?,?,?,?)",
+                (domain, scan_id, now(), level, title, json.dumps(details), org_id),
             )
             self._conn.commit()
             return cur.lastrowid
 
-    def list_alerts(self, limit: int = 50) -> list[dict]:
+    def list_alerts(self, limit: int = 50, org_id: int = DEFAULT_ORG) -> list[dict]:
         """Newest first; unseen alerts have seen_at = None."""
         with self._lock:
-            rows = self._conn.execute("SELECT * FROM alerts ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+            rows = self._conn.execute("SELECT * FROM alerts WHERE org_id=? ORDER BY id DESC LIMIT ?",
+                                      (org_id, limit)).fetchall()
         out = []
         for r in rows:
             d = dict(r)
@@ -282,18 +328,19 @@ class Store:
         return out
 
     # ---- network map ---------------------------------------------------
-    def save_netscan(self, cidr: str, admin: bool, result: dict) -> None:
+    def save_netscan(self, cidr: str, admin: bool, result: dict, org_id: int = DEFAULT_ORG) -> None:
         with self._lock:
-            self._conn.execute("INSERT OR REPLACE INTO netscans(cidr, scanned_at, admin, result) VALUES (?,?,?,?)",
-                               (cidr, now(), 1 if admin else 0, json.dumps(result)))
+            self._conn.execute("INSERT OR REPLACE INTO netscans(cidr, scanned_at, admin, result, org_id) VALUES (?,?,?,?,?)",
+                               (cidr, now(), 1 if admin else 0, json.dumps(result), org_id))
             self._conn.commit()
 
-    def get_netscan(self, cidr: str) -> dict | None:
+    def get_netscan(self, cidr: str, org_id: int = DEFAULT_ORG) -> dict | None:
         with self._lock:
-            row = self._conn.execute("SELECT result FROM netscans WHERE cidr=?", (cidr,)).fetchone()
+            row = self._conn.execute("SELECT result FROM netscans WHERE cidr=? AND org_id=?",
+                                     (cidr, org_id)).fetchone()
         return json.loads(row["result"]) if row else None
 
-    def save_devices(self, cidr: str, devices: list[dict]) -> list[str]:
+    def save_devices(self, cidr: str, devices: list[dict], org_id: int = DEFAULT_ORG) -> list[str]:
         """Remember devices by MAC. Returns MACs seen on this network for the FIRST time."""
         new = []
         with self._lock:
@@ -301,15 +348,16 @@ class Store:
                 mac = d.get("mac")
                 if not mac:
                     continue
-                row = self._conn.execute("SELECT 1 FROM known_devices WHERE cidr=? AND mac=?", (cidr, mac)).fetchone()
+                row = self._conn.execute("SELECT 1 FROM known_devices WHERE cidr=? AND mac=? AND org_id=?",
+                                         (cidr, mac, org_id)).fetchone()
                 if row:
-                    self._conn.execute("UPDATE known_devices SET last_seen=?, name=COALESCE(name, ?) WHERE cidr=? AND mac=?",
-                                       (now(), d.get("hostname"), cidr, mac))
+                    self._conn.execute("UPDATE known_devices SET last_seen=?, name=COALESCE(name, ?) WHERE cidr=? AND mac=? AND org_id=?",
+                                       (now(), d.get("hostname"), cidr, mac, org_id))
                 else:
                     new.append(mac)
                     self._conn.execute(
-                        "INSERT INTO known_devices(cidr, mac, name, first_seen, last_seen) VALUES (?,?,?,?,?)",
-                        (cidr, mac, d.get("hostname"), now(), now()))
+                        "INSERT INTO known_devices(cidr, mac, name, first_seen, last_seen, org_id) VALUES (?,?,?,?,?,?)",
+                        (cidr, mac, d.get("hostname"), now(), now(), org_id))
             self._conn.commit()
         return new
 
@@ -395,10 +443,50 @@ class Store:
                 "SELECT * FROM memberships WHERE org_id=? AND user_id=?", (org_id, user_id)).fetchone()
         return dict(row) if row else None
 
-    def mark_alerts_seen(self, domain: str | None = None) -> None:
+    def mark_alerts_seen(self, domain: str | None = None, org_id: int = DEFAULT_ORG) -> None:
         with self._lock:
             if domain:
-                self._conn.execute("UPDATE alerts SET seen_at=? WHERE seen_at IS NULL AND domain=?", (now(), domain))
+                self._conn.execute("UPDATE alerts SET seen_at=? WHERE seen_at IS NULL AND domain=? AND org_id=?",
+                                   (now(), domain, org_id))
             else:
-                self._conn.execute("UPDATE alerts SET seen_at=? WHERE seen_at IS NULL", (now(),))
+                self._conn.execute("UPDATE alerts SET seen_at=? WHERE seen_at IS NULL AND org_id=?", (now(), org_id))
             self._conn.commit()
+
+    def list_orgs(self) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM orgs ORDER BY id").fetchall()
+        return [dict(r) for r in rows]
+
+
+class OrgStore:
+    """A Store locked to one organisation.
+
+    Hands verification.py, monitor.py and netmap.py a store whose domain/scan/
+    alert/subdomain/network methods are already scoped to one org, so those
+    modules need no changes to become multi-tenant: they just receive this
+    instead of the raw Store. Account-level methods (users, orgs, cve cache,
+    the session secret) are reached on the underlying `.store` directly.
+    """
+
+    # Methods whose last argument is the org to scope to. Everything else is
+    # delegated unchanged to the raw Store.
+    _SCOPED = {
+        "get_domain", "add_domain", "set_hosting", "mark_verified", "mark_unverified",
+        "set_monitor", "list_domains", "monitored_domains", "delete_domain",
+        "save_subdomains", "list_subdomains", "add_scan", "list_scans", "get_scan",
+        "latest_scan", "add_alert", "list_alerts", "save_netscan", "get_netscan",
+        "save_devices", "mark_alerts_seen",
+    }
+
+    def __init__(self, store: Store, org_id: int):
+        self.store = store
+        self.org_id = org_id
+
+    def __getattr__(self, name):
+        attr = getattr(self.store, name)
+        if name in self._SCOPED:
+            def scoped(*args, **kwargs):
+                kwargs.setdefault("org_id", self.org_id)
+                return attr(*args, **kwargs)
+            return scoped
+        return attr
