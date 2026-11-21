@@ -153,6 +153,23 @@ When [Nmap](https://nmap.org/download.html) is installed, Aegis uses it automati
 - The first Nmap scan after the built-in engine is treated as a new baseline
   (no "20 new ports!" alert).
 
+## Exposure management (risk worklist + reports)
+
+Beyond listing findings, Aegis prioritises them. Open **⚠️ Findings (risk)** to see
+every real finding across all your domains in one worklist, ordered by **risk**:
+
+> **Risk = Impact × Likelihood.** Impact is the CVSS score (0–10). Likelihood uses
+> **CISA KEV** (on the list = being exploited now = certain), then **EPSS**
+> (FIRST.org's estimated chance of exploitation in the next 30 days), falling back
+> to severity. So a CVSS-7 that's actively exploited outranks a quiet CVSS-9.
+
+Each finding has a **remediation status** — open / fixed / accepted / false
+positive — that you set and that persists across scans. The header counts them.
+
+**📄 Report** on a scanned domain opens a clean, printable client report (score,
+risk-ranked findings with fixes and status, methodology and scope note). Use your
+browser's **Print → Save as PDF** — no extra software needed.
+
 ## CVE matching
 
 Many servers announce their software and version (`SSH-2.0-OpenSSH_8.2p1`,
@@ -183,6 +200,8 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 | `start-admin.bat` | Launch as admin (for the network map's deep scan) |
 | `app/main.py` | Web server: serves the dashboard and the API |
 | `app/accounts.py` | Customer accounts: scrypt passwords, signed-cookie sessions, organisations |
+| `app/risk.py` | Risk = impact (CVSS) × likelihood (KEV / EPSS); ranks the findings worklist |
+| `app/report.py` | Printable per-domain client report (HTML → browser Print to PDF) |
 | `app/verification.py` | Proves domain ownership via a DNS TXT token |
 | `app/scanner.py` | Resolves DNS, scans ports (Nmap or built-in), checks TLS and web headers |
 | `app/traffic.py` | Live view of this computer's connections to the internet, by app and owner |
@@ -200,7 +219,7 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 | `app/db.py` | Saves domains, scan history and alerts in SQLite (`aegis.db`), with small migrations |
 | `app/static/` | The dashboard (HTML/CSS/JS) |
 | `tools/fake_service.py` | Opens a fake service on a local port (optionally with a banner), for demos |
-| `tests/` | 137 tests, including a real scan of a fake FTP server on localhost |
+| `tests/` | 155 tests, including a real scan of a fake FTP server on localhost |
 
 ## Roadmap
 
@@ -211,6 +230,7 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 - [x] Weekly scans + change alerts in the dashboard
 - [ ] Email delivery for alerts
 - [x] CVE matching on software versions (built-in list + live NVD)
+- [x] Exposure management: EPSS, risk-ranked worklist, remediation status, PDF-able reports
 - [x] Customer accounts / login + organisations (tenant isolation, audit log)
 - [ ] NIS2 / GDPR readiness mapping
 - [ ] Phishing-awareness training module

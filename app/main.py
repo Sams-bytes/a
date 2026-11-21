@@ -16,11 +16,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import jobs, monitor, netmap, risk, traffic
+from app import jobs, monitor, netmap, report, risk, traffic
 from app.accounts import SESSION_COOKIE, Accounts, AuthError
 from app.db import OrgStore, Store
 from app.verification import (InvalidDomain, NotVerified, VerificationService, lookup_txt,
@@ -263,6 +263,20 @@ def all_findings(ctx: Ctx = Depends(get_ctx)):
             counts[st["status"]] = counts.get(st["status"], 0) + 1
     rows.sort(key=lambda r: (r["status"] != "open", -r["risk"]))
     return {"findings": rows, "counts": counts}
+
+
+@app.get("/report/{domain}", response_class=HTMLResponse, include_in_schema=False)
+def domain_report(domain: str, ctx: Ctx = Depends(get_ctx)):
+    """A printable client report for one domain (open it, then Print -> Save as PDF)."""
+    try:
+        domain = normalize_domain(domain)
+    except InvalidDomain as e:
+        _bad_domain(e)
+    scan = ctx.store.latest_scan(domain)
+    if not ctx.store.get_domain(domain) or not scan:
+        raise HTTPException(status_code=404, detail="No scan to report on yet. Run a scan first.")
+    ctx.audit("report", domain)
+    return report.render(ctx.org_name, domain, scan, ctx.store.finding_statuses(domain))
 
 
 @app.post("/api/findings/status")

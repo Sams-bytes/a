@@ -1,0 +1,110 @@
+"""A printable security report for one domain - the deliverable you hand a client.
+
+Server-rendered, self-contained HTML. Open it in a browser and use Print -> Save
+as PDF (no PDF library needed, so the one-click launcher stays dependency-free).
+It shows the score, a risk-ranked findings table with each finding's remediation
+status, and an honest methodology/scope note.
+"""
+
+from __future__ import annotations
+
+import html
+from datetime import datetime, timezone
+
+from app import risk
+
+_TIER_COLOR = {"critical": "#b3261e", "high": "#d0581a", "medium": "#b8860b",
+               "low": "#3f7cc4", "info": "#6b7280"}
+
+
+def _score_label(s: int) -> str:
+    return "Good" if s >= 80 else "Moderate risk" if s >= 60 else "High risk" if s >= 40 else "Critical risk"
+
+
+def scored_findings(scan: dict, statuses: dict, include_info: bool = False) -> list[dict]:
+    """The scan's findings with a risk score and remediation status attached,
+    highest open risk first."""
+    out = []
+    for f in scan["result"].get("findings", []):
+        if f.get("severity") == "info" and not include_info:
+            continue
+        st = statuses.get(f["key"], {"status": "open", "note": None})
+        score = risk.risk_score(f)
+        out.append({**f, "risk": score, "risk_tier": risk.risk_tier(score),
+                    "status": st["status"], "note": st.get("note"),
+                    "kev": any(c.get("kev") for c in f.get("cves", []))})
+    out.sort(key=lambda r: (r["status"] != "open", -r["risk"]))
+    return out
+
+
+def render(org_name: str, domain: str, scan: dict, statuses: dict) -> str:
+    e = html.escape
+    rows = scored_findings(scan, statuses)
+    score = scan["result"].get("score", 0)
+    generated = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    scanned = (scan.get("finished_at") or "")[:16].replace("T", " ")
+
+    counts = {"open": 0, "fixed": 0, "accepted": 0, "false_positive": 0}
+    for r in rows:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+
+    status_label = {"open": "Open", "fixed": "Fixed", "accepted": "Accepted",
+                    "false_positive": "False positive"}
+    findings_html = "".join(
+        f"""<tr class="{r['status']}">
+          <td><span class="risk" style="background:{_TIER_COLOR[r['risk_tier']]}">{r['risk']}</span></td>
+          <td><b>{e(r['title'])}</b><div class="fix">{e(r.get('fix', ''))}</div>
+              {f'<div class="note">Note: {e(r["note"])}</div>' if r.get('note') else ''}</td>
+          <td>CVSS {r.get('cvss', '?')}{f"<br>{round(r['epss']*100)}% EPSS" if r.get('epss') is not None else ''}
+              {'<br><b>KEV</b>' if r.get('kev') else ''}</td>
+          <td>{status_label.get(r['status'], r['status'])}</td></tr>"""
+        for r in rows) or '<tr><td colspan="4">No findings of note. Nothing actionable was detected.</td></tr>'
+
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aegis report — {e(domain)}</title>
+<style>
+  body {{ font: 14px/1.5 system-ui, Arial, sans-serif; color: #14181f; max-width: 820px;
+    margin: 0 auto; padding: 32px 24px; }}
+  h1 {{ margin: 0 0 2px; font-size: 24px; }}
+  .sub {{ color: #5b6472; margin: 0 0 20px; }}
+  .scorebox {{ display: flex; align-items: center; gap: 16px; border: 1px solid #e2e5ea;
+    border-radius: 12px; padding: 16px 20px; margin-bottom: 20px; }}
+  .score {{ font-size: 40px; font-weight: 800; }}
+  .counts span {{ display: inline-block; margin-right: 14px; }}
+  table {{ width: 100%; border-collapse: collapse; margin: 10px 0 24px; }}
+  th, td {{ text-align: left; padding: 8px 10px; border-bottom: 1px solid #e2e5ea; vertical-align: top; }}
+  th {{ font-size: 12px; text-transform: uppercase; color: #5b6472; }}
+  .risk {{ display: inline-block; min-width: 28px; text-align: center; padding: 2px 7px;
+    border-radius: 6px; color: #fff; font-weight: 700; }}
+  .fix {{ color: #5b6472; font-size: 13px; margin-top: 3px; }}
+  .note {{ color: #3f7cc4; font-size: 13px; margin-top: 3px; }}
+  tr.fixed td, tr.accepted td, tr.false_positive td {{ opacity: .55; }}
+  .method {{ font-size: 12px; color: #5b6472; border-top: 1px solid #e2e5ea; padding-top: 14px; }}
+  .printbtn {{ float: right; padding: 8px 14px; border: 0; border-radius: 8px; background: #2753d6;
+    color: #fff; cursor: pointer; }}
+  @media print {{ .printbtn {{ display: none; }} body {{ padding: 0; }} }}
+</style></head><body>
+<button class="printbtn" onclick="window.print()">Print / Save as PDF</button>
+<h1>Security report</h1>
+<p class="sub">{e(domain)} &middot; prepared for {e(org_name)} &middot; generated {generated}
+  {f'&middot; based on the scan of {e(scanned)}' if scanned else ''}</p>
+<div class="scorebox">
+  <div class="score" style="color:{'#1f8a4c' if score>=80 else '#b8860b' if score>=60 else '#d0581a' if score>=40 else '#b3261e'}">{score}</div>
+  <div><b>{_score_label(score)}</b> &mdash; exposure score out of 100<br>
+    <span class="counts"><span><b>{counts['open']}</b> open</span>
+      <span><b>{counts['fixed']}</b> fixed</span>
+      <span><b>{counts['accepted']}</b> accepted</span>
+      <span><b>{counts['false_positive']}</b> false positive</span></span></div>
+</div>
+<table>
+  <tr><th>Risk</th><th>Finding &amp; recommended fix</th><th>Signals</th><th>Status</th></tr>
+  {findings_html}
+</table>
+<p class="method"><b>Method.</b> Risk = impact (CVSS 0&ndash;10) &times; likelihood. Likelihood uses
+CISA KEV (actively exploited = certain) and EPSS (FIRST.org's 30-day exploit probability),
+falling back to severity. <b>Scope.</b> Only {e(domain)}, which the account holder verified they
+control, was assessed, from the outside. This is a point-in-time exposure assessment, not a
+guarantee of security, and version-based matches are possible (not confirmed) vulnerabilities.
+Generated by Aegis.</p>
+</body></html>"""

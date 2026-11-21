@@ -119,6 +119,14 @@ async function renderVerified(root, d) {
   $(".dname", root).textContent = d.domain;
   $(".remove", root).onclick = () => removeDomain(d.domain);
   $(".scan", root).onclick = (e) => runScan(d.domain, e.target);
+  if (d.last_score != null) {
+    const btn = document.createElement("button");
+    btn.className = "ghost small";
+    btn.textContent = "📄 Report";
+    btn.title = "Open a printable client report (Print → Save as PDF)";
+    btn.onclick = () => window.open(`/report/${encodeURIComponent(d.domain)}`, "_blank");
+    $(".scan", root).after(btn);
+  }
   insertProjectBar(root, d);
   renderMonitor(root, d);
   renderHosting(root, d);
