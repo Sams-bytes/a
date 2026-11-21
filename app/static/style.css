@@ -247,3 +247,17 @@ table.ports td.b { font-family: var(--mono); font-size: .8rem; color: var(--mute
 .conf.confirmed { background: color-mix(in srgb, var(--good) 20%, transparent); color: var(--good); }
 .conf.reported { background: color-mix(in srgb, var(--info) 22%, transparent); color: var(--info); }
 .inc-match .evi { color: var(--muted); }
+
+/* ---- incident response (cases) ---- */
+.case-row { cursor: pointer; }
+.case-row:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.pending { color: var(--high); }
+.sev.low { color: var(--low); } .sev.medium { color: var(--med); }
+.sev.high { color: var(--high); } .sev.critical { color: var(--crit); }
+.act-status { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+.act-status.proposed { background: color-mix(in srgb, var(--med) 22%, transparent); color: var(--med); }
+.act-status.approved { background: color-mix(in srgb, var(--low) 22%, transparent); color: var(--low); }
+.act-status.rejected { background: color-mix(in srgb, var(--info) 22%, transparent); color: var(--info); }
+.act-status.done { background: color-mix(in srgb, var(--good) 22%, transparent); color: var(--good); }
+.actions-list li, .timeline li { margin-bottom: 8px; }
+.timeline { border-left: 2px solid var(--line); padding-left: 14px; }

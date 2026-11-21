@@ -98,6 +98,39 @@ CREATE TABLE IF NOT EXISTS projects (       -- an assessment engagement: a scope
     authorized_at TEXT,
     created_at    TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS ir_cases (        -- incident-response case: a tracked investigation
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id      INTEGER NOT NULL,
+    title       TEXT NOT NULL,
+    severity    TEXT NOT NULL,          -- low | medium | high | critical
+    status      TEXT NOT NULL,          -- open | investigating | contained | closed
+    domain      TEXT,
+    source      TEXT,                   -- what opened it (a finding key, an alert, 'manual')
+    created_by  INTEGER,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS case_events (     -- the timeline: notes, status changes, actions
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    case_id     INTEGER NOT NULL,
+    org_id      INTEGER NOT NULL,
+    at          TEXT NOT NULL,
+    user_id     INTEGER,
+    kind        TEXT NOT NULL,          -- created | note | status | action
+    text        TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS case_actions (    -- a response action that needs approval before it is taken
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    case_id     INTEGER NOT NULL,
+    org_id      INTEGER NOT NULL,
+    action      TEXT NOT NULL,
+    status      TEXT NOT NULL,          -- proposed | approved | rejected | done
+    proposed_by INTEGER,
+    decided_by  INTEGER,
+    note        TEXT,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS finding_status (  -- remediation workflow: the state of one finding
     org_id      INTEGER NOT NULL,
     domain      TEXT NOT NULL,
@@ -512,6 +545,113 @@ class Store:
                    FROM projects p WHERE p.org_id=? ORDER BY p.id DESC""", (org_id,)).fetchall()
         return [dict(r) for r in rows]
 
+    # ---- incident-response cases ---------------------------------------
+    def create_case(self, title: str, severity: str, domain: str | None, source: str,
+                    created_by: int | None, org_id: int = DEFAULT_ORG) -> dict:
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT INTO ir_cases(org_id, title, severity, status, domain, source, created_by, created_at, updated_at)
+                   VALUES (?,?,?,'open',?,?,?,?,?)""",
+                (org_id, title, severity, domain, source, created_by, now(), now()))
+            cid = cur.lastrowid
+            self._conn.execute(
+                "INSERT INTO case_events(case_id, org_id, at, user_id, kind, text) VALUES (?,?,?,?,'created',?)",
+                (cid, org_id, now(), created_by, f"Case opened (severity {severity})"))
+            self._conn.commit()
+        return self.get_case(cid, org_id)
+
+    def list_cases(self, org_id: int = DEFAULT_ORG) -> list[dict]:
+        """Open cases first, then by recency."""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT c.*, (SELECT COUNT(*) FROM case_actions a
+                        WHERE a.case_id=c.id AND a.status='proposed') AS pending_actions
+                   FROM ir_cases c WHERE c.org_id=?
+                   ORDER BY c.status='closed', c.updated_at DESC""", (org_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_case(self, case_id: int, org_id: int = DEFAULT_ORG) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM ir_cases WHERE id=? AND org_id=?",
+                                     (case_id, org_id)).fetchone()
+            if not row:
+                return None
+            case = dict(row)
+            case["events"] = [dict(r) for r in self._conn.execute(
+                """SELECT e.*, u.email AS user_email FROM case_events e
+                   LEFT JOIN users u ON u.id=e.user_id
+                   WHERE e.case_id=? ORDER BY e.id""", (case_id,))]
+            case["actions"] = [dict(r) for r in self._conn.execute(
+                "SELECT * FROM case_actions WHERE case_id=? ORDER BY id", (case_id,))]
+        return case
+
+    def add_case_event(self, case_id: int, user_id: int | None, kind: str, text: str,
+                       org_id: int = DEFAULT_ORG) -> None:
+        with self._lock:
+            owned = self._conn.execute("SELECT 1 FROM ir_cases WHERE id=? AND org_id=?",
+                                       (case_id, org_id)).fetchone()
+            if not owned:
+                raise ValueError("No such case in this organisation.")
+            self._conn.execute(
+                "INSERT INTO case_events(case_id, org_id, at, user_id, kind, text) VALUES (?,?,?,?,?,?)",
+                (case_id, org_id, now(), user_id, kind, text))
+            self._conn.execute("UPDATE ir_cases SET updated_at=? WHERE id=?", (now(), case_id))
+            self._conn.commit()
+
+    def set_case_status(self, case_id: int, status: str, user_id: int | None,
+                        org_id: int = DEFAULT_ORG) -> None:
+        with self._lock:
+            owned = self._conn.execute("SELECT 1 FROM ir_cases WHERE id=? AND org_id=?",
+                                       (case_id, org_id)).fetchone()
+            if not owned:
+                raise ValueError("No such case in this organisation.")
+            self._conn.execute("UPDATE ir_cases SET status=?, updated_at=? WHERE id=?", (status, now(), case_id))
+            self._conn.execute(
+                "INSERT INTO case_events(case_id, org_id, at, user_id, kind, text) VALUES (?,?,?,?,'status',?)",
+                (case_id, org_id, now(), user_id, f"Status changed to {status}"))
+            self._conn.commit()
+
+    def add_action(self, case_id: int, action: str, proposed_by: int | None, note: str | None,
+                   org_id: int = DEFAULT_ORG) -> dict:
+        with self._lock:
+            owned = self._conn.execute("SELECT 1 FROM ir_cases WHERE id=? AND org_id=?",
+                                       (case_id, org_id)).fetchone()
+            if not owned:
+                raise ValueError("No such case in this organisation.")
+            cur = self._conn.execute(
+                """INSERT INTO case_actions(case_id, org_id, action, status, proposed_by, note, created_at, updated_at)
+                   VALUES (?,?,?,'proposed',?,?,?,?)""",
+                (case_id, org_id, action, proposed_by, note, now(), now()))
+            self._conn.execute(
+                "INSERT INTO case_events(case_id, org_id, at, user_id, kind, text) VALUES (?,?,?,?,'action',?)",
+                (case_id, org_id, now(), proposed_by, f"Response action proposed: {action}"))
+            self._conn.execute("UPDATE ir_cases SET updated_at=? WHERE id=?", (now(), case_id))
+            self._conn.commit()
+            aid = cur.lastrowid
+            return dict(self._conn.execute("SELECT * FROM case_actions WHERE id=?", (aid,)).fetchone())
+
+    def decide_action(self, action_id: int, status: str, decided_by: int | None,
+                      note: str | None, org_id: int = DEFAULT_ORG) -> dict:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM case_actions WHERE id=? AND org_id=?",
+                                     (action_id, org_id)).fetchone()
+            if not row:
+                raise ValueError("No such action in this organisation.")
+            # Approval gate: a disruptive action can only be carried out after approval.
+            if status == "done" and row["status"] != "approved":
+                raise ValueError("This action must be approved before it can be marked done.")
+            if status in ("approved", "rejected") and row["status"] != "proposed":
+                raise ValueError("This action has already been decided.")
+            self._conn.execute(
+                "UPDATE case_actions SET status=?, decided_by=?, note=COALESCE(?, note), updated_at=? WHERE id=?",
+                (status, decided_by, note, now(), action_id))
+            self._conn.execute(
+                "INSERT INTO case_events(case_id, org_id, at, user_id, kind, text) VALUES (?,?,?,?,'action',?)",
+                (row["case_id"], org_id, now(), decided_by, f"Action '{row['action']}' marked {status}"))
+            self._conn.execute("UPDATE ir_cases SET updated_at=? WHERE id=?", (now(), row["case_id"]))
+            self._conn.commit()
+            return dict(self._conn.execute("SELECT * FROM case_actions WHERE id=?", (action_id,)).fetchone())
+
     # ---- remediation status --------------------------------------------
     def set_finding_status(self, domain: str, finding_key: str, status: str,
                            note: str | None = None, org_id: int = DEFAULT_ORG) -> None:
@@ -581,6 +721,8 @@ class OrgStore:
         "save_devices", "mark_alerts_seen",
         "create_project", "get_project", "list_projects", "set_domain_project",
         "set_finding_status", "finding_statuses",
+        "create_case", "list_cases", "get_case", "add_case_event", "set_case_status",
+        "add_action", "decide_action",
     }
 
     def __init__(self, store: Store, org_id: int):

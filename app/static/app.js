@@ -607,6 +607,95 @@ $("#audit-btn").onclick = openAudit;
 $("#projects-btn").onclick = openProjects;
 $("#findings-btn").onclick = openFindings;
 $("#haei-btn").onclick = openHaei;
+$("#cases-btn").onclick = openCases;
+
+// ---------- incident response (cases) ----------
+let myRole = null;
+
+async function openCases() {
+  current = null;
+  loadDomains();
+  const detail = $("#detail");
+  detail.innerHTML = `<div class="card"><h1>🚨 Incident response</h1>
+    <p class="hint">Turn a finding or alert into a tracked case: investigate, keep a timeline, and propose
+    response actions that an admin must approve before they are carried out. Aegis records the decisions —
+    it does not reach into your systems to execute them.</p>
+    <form id="case-form" class="add" style="flex-wrap:wrap;gap:8px">
+      <input id="case-title" placeholder="New case title" required>
+      <select id="case-sev">${["low", "medium", "high", "critical"].map((s) => `<option ${s === "medium" ? "selected" : ""}>${s}</option>`).join("")}</select>
+      <button type="submit">Open case</button>
+    </form>
+    <div id="case-list"></div></div>`;
+  $("#case-form").onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const c = await api("POST", "/api/cases", { title: $("#case-title").value, severity: $("#case-sev").value });
+      openCase(c.id);
+    } catch (err) { alert(err.message); }
+  };
+  await renderCaseList();
+}
+
+async function renderCaseList() {
+  const box = $("#case-list");
+  if (!box) return;
+  const cases = await api("GET", "/api/cases");
+  box.innerHTML = cases.length ? `<table class="ports">
+    <tr><th>#</th><th>Title</th><th>Severity</th><th>Status</th><th>Pending</th><th>Updated</th></tr>
+    ${cases.map((c) => `<tr class="case-row" data-id="${c.id}">
+      <td class="b">${c.id}</td><td><b>${esc(c.title)}</b></td>
+      <td><span class="sev ${c.severity}">${esc(c.severity)}</span></td>
+      <td>${esc(c.status)}</td>
+      <td>${c.pending_actions ? `<b class="pending">${c.pending_actions}</b>` : "0"}</td>
+      <td class="hint">${new Date(c.updated_at).toLocaleString()}</td></tr>`).join("")}</table>`
+    : `<p class="hint">No cases yet. Open one above, or press “Open case” on a finding in the worklist.</p>`;
+  box.querySelectorAll(".case-row").forEach((r) => r.onclick = () => openCase(Number(r.dataset.id)));
+}
+
+async function openCase(id) {
+  const detail = $("#detail");
+  let c;
+  try { c = await api("GET", `/api/cases/${id}`); }
+  catch (e) { detail.innerHTML = `<div class="card">${esc(e.message)}</div>`; return; }
+
+  const statusSel = ["open", "investigating", "contained", "closed"]
+    .map((s) => `<option ${c.status === s ? "selected" : ""}>${s}</option>`).join("");
+  const actionRow = (a) => {
+    let btns = "";
+    if (a.status === "proposed") {
+      btns = myRole === "admin"
+        ? `<button class="ghost small act-dec" data-id="${a.id}" data-s="approved">Approve</button>
+           <button class="ghost small danger act-dec" data-id="${a.id}" data-s="rejected">Reject</button>`
+        : `<span class="hint">awaiting admin approval</span>`;
+    } else if (a.status === "approved") {
+      btns = `<button class="ghost small act-dec" data-id="${a.id}" data-s="done">Mark done</button>`;
+    }
+    return `<li><b>${esc(a.action)}</b> <span class="act-status ${a.status}">${esc(a.status)}</span> ${btns}
+      ${a.note ? `<div class="hint">${esc(a.note)}</div>` : ""}</li>`;
+  };
+
+  detail.innerHTML = `<div class="card">
+    <button class="ghost small" id="case-back">← All cases</button>
+    <h1>#${c.id} ${esc(c.title)}</h1>
+    <p><span class="sev ${c.severity}">${esc(c.severity)}</span> &nbsp; Status:
+      <select id="case-status">${statusSel}</select>
+      ${c.domain ? ` &nbsp;·&nbsp; ${esc(c.domain)}` : ""}${c.source ? ` &nbsp;·&nbsp; <span class="hint">${esc(c.source)}</span>` : ""}</p>
+    <h3>Response actions <span class="hint">(approval required before “done”)</span></h3>
+    <ul class="actions-list">${c.actions.map(actionRow).join("") || `<li class="hint">No actions proposed.</li>`}</ul>
+    <form id="action-form" class="add"><input id="action-text" placeholder="Propose a response action (e.g. Block RDP at the firewall)" required><button>Propose</button></form>
+    <h3>Timeline</h3>
+    <ul class="timeline">${c.events.map((e) => `<li><span class="hint">${new Date(e.at).toLocaleString()} · ${esc(e.user_email || "system")}</span><br>${esc(e.text)}</li>`).join("")}</ul>
+    <form id="note-form" class="add"><input id="note-text" placeholder="Add an investigation note" required><button>Add note</button></form>
+  </div>`;
+  $("#case-back").onclick = openCases;
+  $("#case-status").onchange = async (e) => { await api("POST", `/api/cases/${id}/status`, { status: e.target.value }); openCase(id); };
+  $("#note-form").onsubmit = async (e) => { e.preventDefault(); await api("POST", `/api/cases/${id}/note`, { text: $("#note-text").value }); openCase(id); };
+  $("#action-form").onsubmit = async (e) => { e.preventDefault(); await api("POST", `/api/cases/${id}/actions`, { action: $("#action-text").value }); openCase(id); };
+  detail.querySelectorAll(".act-dec").forEach((b) => b.onclick = async () => {
+    try { await api("POST", `/api/actions/${b.dataset.id}/decision`, { status: b.dataset.s }); openCase(id); }
+    catch (err) { alert(err.message); }
+  });
+}
 
 // ---------- Historical Attack Intelligence ----------
 async function openHaei() {
@@ -678,18 +767,29 @@ async function renderFindings() {
     ${Object.entries(STATUS_LABELS).map(([v, l]) => `<option value="${v}" ${f.status === v ? "selected" : ""}>${l}</option>`).join("")}
     </select>`;
   box.innerHTML = summary + `<table class="ports">
-    <tr><th>Risk</th><th>Finding</th><th>Domain</th><th>Signals</th><th>Status</th></tr>
+    <tr><th>Risk</th><th>Finding</th><th>Domain</th><th>Signals</th><th>Status</th><th></th></tr>
     ${data.findings.map((f) => `<tr class="${f.status !== "open" ? "done-row" : ""}">
       <td><span class="risk-badge ${f.risk_tier}">${f.risk}</span></td>
       <td><b>${esc(f.title)}</b></td>
       <td class="b">${esc(f.domain)}</td>
       <td>CVSS ${f.cvss ?? "?"}${f.epss != null ? ` · ${Math.round(f.epss * 100)}% EPSS` : ""}${f.kev ? ` · <span class="kev">KEV</span>` : ""}</td>
-      <td>${sel(f)}</td></tr>`).join("")}</table>`;
+      <td>${sel(f)}</td>
+      <td><button class="ghost small mkcase" data-domain="${esc(f.domain)}" data-title="${esc(f.title)}"
+            data-sev="${esc(f.severity)}" data-key="${esc(f.key)}">Open case</button></td></tr>`).join("")}</table>`;
   box.querySelectorAll(".fstatus").forEach((s) => s.onchange = async (e) => {
     try {
       await api("POST", "/api/findings/status",
         { domain: e.target.dataset.domain, key: e.target.dataset.key, status: e.target.value });
       renderFindings();
+    } catch (err) { alert(err.message); }
+  });
+  box.querySelectorAll(".mkcase").forEach((b) => b.onclick = async () => {
+    const d = b.dataset;
+    const sev = ["low", "medium", "high", "critical"].includes(d.sev) ? d.sev : "medium";
+    try {
+      const c = await api("POST", "/api/cases",
+        { title: d.title, severity: sev, domain: d.domain, source: `finding:${d.key}` });
+      openCase(c.id);
     } catch (err) { alert(err.message); }
   });
 }
@@ -794,6 +894,7 @@ $("#logout").onclick = async () => {
 };
 
 function startApp(me) {
+  myRole = me.role;
   $("#whoami").textContent = `${me.email} · ${me.org_name || ""}`;
   $("#logout").classList.remove("hidden");
   loadProjects();

@@ -116,6 +116,35 @@ class FindingStatusIn(BaseModel):
     note: str | None = None
 
 
+class CaseIn(BaseModel):
+    title: str
+    severity: str = "medium"        # low | medium | high | critical
+    domain: str | None = None
+    source: str = "manual"
+
+
+class NoteIn(BaseModel):
+    text: str
+
+
+class CaseStatusIn(BaseModel):
+    status: str                     # open | investigating | contained | closed
+
+
+class ActionIn(BaseModel):
+    action: str
+    note: str | None = None
+
+
+class DecisionIn(BaseModel):
+    status: str                     # approved | rejected | done
+    note: str | None = None
+
+
+CASE_STATUSES = ("open", "investigating", "contained", "closed")
+SEVERITIES = ("low", "medium", "high", "critical")
+
+
 def scan_mode(row: dict) -> str:
     """What the next scan will be: full / light / unknown (hosting not checked yet)."""
     if row["domain"] == "localhost" or row.get("hosting") == "own":
@@ -263,6 +292,80 @@ def all_findings(ctx: Ctx = Depends(get_ctx)):
             counts[st["status"]] = counts.get(st["status"], 0) + 1
     rows.sort(key=lambda r: (r["status"] != "open", -r["risk"]))
     return {"findings": rows, "counts": counts}
+
+
+# ---- incident response: cases, timeline, approval-gated actions -----------
+@app.get("/api/cases")
+def list_cases(ctx: Ctx = Depends(get_ctx)):
+    return ctx.store.list_cases()
+
+
+@app.post("/api/cases")
+def create_case(body: CaseIn, ctx: Ctx = Depends(get_ctx)):
+    if not (body.title or "").strip():
+        raise HTTPException(status_code=422, detail="A case needs a title.")
+    if body.severity not in SEVERITIES:
+        raise HTTPException(status_code=422, detail=f"severity must be one of {', '.join(SEVERITIES)}")
+    case = ctx.store.create_case(body.title.strip(), body.severity, body.domain, body.source, ctx.user["id"])
+    ctx.audit("open_case", f"#{case['id']} {body.title.strip()}")
+    return case
+
+
+@app.get("/api/cases/{case_id}")
+def get_case(case_id: int, ctx: Ctx = Depends(get_ctx)):
+    case = ctx.store.get_case(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found.")
+    return case
+
+
+def _case_or_404(ctx: Ctx, fn, *args):
+    try:
+        return fn(*args)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.post("/api/cases/{case_id}/note")
+def add_case_note(case_id: int, body: NoteIn, ctx: Ctx = Depends(get_ctx)):
+    if not (body.text or "").strip():
+        raise HTTPException(status_code=422, detail="Note text is required.")
+    _case_or_404(ctx, ctx.store.add_case_event, case_id, ctx.user["id"], "note", body.text.strip())
+    return ctx.store.get_case(case_id)
+
+
+@app.post("/api/cases/{case_id}/status")
+def set_case_status(case_id: int, body: CaseStatusIn, ctx: Ctx = Depends(get_ctx)):
+    if body.status not in CASE_STATUSES:
+        raise HTTPException(status_code=422, detail=f"status must be one of {', '.join(CASE_STATUSES)}")
+    _case_or_404(ctx, ctx.store.set_case_status, case_id, body.status, ctx.user["id"])
+    ctx.audit("case_status", f"#{case_id}", body.status)
+    return ctx.store.get_case(case_id)
+
+
+@app.post("/api/cases/{case_id}/actions")
+def propose_action(case_id: int, body: ActionIn, ctx: Ctx = Depends(get_ctx)):
+    if not (body.action or "").strip():
+        raise HTTPException(status_code=422, detail="Describe the response action.")
+    _case_or_404(ctx, ctx.store.add_action, case_id, body.action.strip(), ctx.user["id"], body.note)
+    return ctx.store.get_case(case_id)
+
+
+@app.post("/api/actions/{action_id}/decision")
+def decide_action(action_id: int, body: DecisionIn, ctx: Ctx = Depends(get_ctx)):
+    if body.status not in ("approved", "rejected", "done"):
+        raise HTTPException(status_code=422, detail="decision must be approved, rejected or done")
+    # Disruptive actions need an authorised approver: only an org admin may approve/reject.
+    if body.status in ("approved", "rejected") and ctx.role != "admin":
+        raise HTTPException(status_code=403, detail="Only an organisation admin can approve or reject an action.")
+    try:
+        action = ctx.store.decide_action(action_id, body.status, ctx.user["id"], body.note)
+    except ValueError as e:
+        # "already decided" / "must be approved first" are 409 conflicts; unknown is 404.
+        code = 404 if "No such action" in str(e) else 409
+        raise HTTPException(status_code=code, detail=str(e))
+    ctx.audit("action_decision", action["action"], body.status)
+    return ctx.store.get_case(action["case_id"])
 
 
 # ---- Historical Attack Intelligence (HAEI) --------------------------------
