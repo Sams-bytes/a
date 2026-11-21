@@ -44,6 +44,33 @@ dashboard. The **What changed** card shows the details.
 - Try it: run `.venv\Scripts\python tools\fake_service.py 5432` (a fake database on
   your own computer), then press **Run automatic check now** on localhost.
 
+## Hosting check: light vs full scan
+
+Owning a domain is not owning the server. If a domain's IP addresses belong
+to a hosting or cloud company (looked up in the public RDAP registry, e.g.
+"HOSTINGER-HOSTING"), Aegis does a **light scan**: the website, its certificate,
+headers and software versions, like a browser visit. **No port scan**, because
+on shared hosting the machine also serves other customers. If you run your own
+VPS or dedicated server there, press **This is my own server**. Aegis records
+when you confirmed it and then does the full scan. IPs that belong to no known
+hosting company get the full scan; if the lookup fails, Aegis plays safe and scans lightly.
+
+## Subdomain discovery
+
+On a verified main domain, **Discover subdomains** searches public certificate
+logs (crt.sh and certspotter: each has gaps, so both are used), DNS records (MX,
+SRV) and ~120 common names (vpn, mail, dev, test, old, …).
+
+- **Wildcard DNS** is detected, so guesses that only hit a catch-all record are ignored.
+- **Subdomain takeover:** a name that points (CNAME) to a cloud service that no
+  longer exists (e.g. a cancelled Shopify/Heroku/GitHub Pages site) is flagged
+  red, because an attacker could claim it and show their page on your subdomain.
+- Each subdomain shows who hosts it. **Monitor** adds it under its parent (no
+  extra TXT record needed: the parent's record covers it, and it is re-checked
+  before every automatic scan). Hosted by a provider → light scan.
+- Weekly monitoring re-runs discovery and alerts on new subdomains and new takeover risks.
+- Privacy: the domain name goes to crt.sh/certspotter (public logs) and IP addresses to rdap.org.
+
 ## Professional scanning with Nmap
 
 When [Nmap](https://nmap.org/download.html) is installed, Aegis uses it automatically:
@@ -93,6 +120,8 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 | `app/main.py` | Web server: serves the dashboard and the API |
 | `app/verification.py` | Proves domain ownership via a DNS TXT token |
 | `app/scanner.py` | Resolves DNS, scans ports (Nmap or built-in), checks TLS and web headers |
+| `app/hosting.py` | Who owns an IP (RDAP) → light or full scan |
+| `app/subdomains.py` | Subdomain discovery: certificate logs, DNS, common names, takeover check |
 | `app/nmap_engine.py` | Runs Nmap safely (TCP top 1,000 + UDP) and parses its XML |
 | `app/findings.py` | Turns scan data into findings: severity, CVSS, plain-English fix, NIS2 article |
 | `app/fingerprint.py` | Recognises software + version in banners and headers |
@@ -102,7 +131,7 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 | `app/db.py` | Saves domains, scan history and alerts in SQLite (`aegis.db`), with small migrations |
 | `app/static/` | The dashboard (HTML/CSS/JS) |
 | `tools/fake_service.py` | Opens a fake service on a local port (optionally with a banner), for demos |
-| `tests/` | 73 tests, including a real scan of a fake FTP server on localhost |
+| `tests/` | 86 tests, including a real scan of a fake FTP server on localhost |
 
 ## Roadmap
 

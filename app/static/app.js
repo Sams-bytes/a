@@ -28,10 +28,12 @@ $("#theme").onclick = () => {
 
 // ---------- domain list ----------
 async function loadDomains() {
-  domains = await api("GET", "/api/domains");
+  const all = await api("GET", "/api/domains");
+  // Roots first, each followed by its monitored subdomains (indented).
+  domains = all.filter((d) => !d.parent).flatMap((root) => [root, ...all.filter((c) => c.parent === root.domain)]);
   const ul = $("#domain-list");
   ul.innerHTML = domains.map((d) => `
-    <li data-d="${esc(d.domain)}" class="${d.domain === current ? "active" : ""}">
+    <li data-d="${esc(d.domain)}" class="${d.domain === current ? "active" : ""} ${d.parent ? "child" : ""}">
       <span class="name">${esc(d.domain)}</span>
       <span class="meta">${d.verified
         ? (d.last_score != null ? `<b style="color:${scoreColor(d.last_score)}">${d.last_score}</b>/100` : "verified")
@@ -89,7 +91,92 @@ async function renderVerified(root, d) {
   $(".remove", root).onclick = () => removeDomain(d.domain);
   $(".scan", root).onclick = (e) => runScan(d.domain, e.target);
   renderMonitor(root, d);
+  renderHosting(root, d);
+  if (!d.parent && d.domain !== "localhost") renderSubdomains(root, d);
   await renderHistory(d.domain, true);
+}
+
+// ---------- hosting: who owns the server? ----------
+async function renderHosting(root, d) {
+  const box = $(".hosting", root);
+  if (d.domain === "localhost") {
+    box.innerHTML = `<b>Hosting:</b> this computer → <b>full scan</b> (it's yours).`;
+    return;
+  }
+  if (d.scan_mode === "unknown") {
+    box.innerHTML = `<b>Hosting:</b> <span class="hint">checking who owns the server…</span>`;
+    try { d = await api("POST", `/api/domains/${encodeURIComponent(d.domain)}/hosting-check`); } catch {}
+  }
+  const who = d.hosting_provider ? esc(d.hosting_provider) : "no hosting company found (probably your own server)";
+  if (d.scan_mode === "full") {
+    box.innerHTML = `<b>Hosting:</b> ${who} → <b>full scan</b> (all ports + UDP).
+      ${d.hosting === "own" ? `<span class="hint">You confirmed on ${new Date(d.hosting_confirmed_at).toLocaleDateString()}
+        that this server is yours alone.</span> <button class="ghost small to-light">Switch to light scan</button>` : ""}`;
+  } else {
+    box.innerHTML = `<b>Hosting:</b> ${who} → <b>light scan</b>: the website, its certificate, headers and software
+      versions, like a browser visit. <b>No port scan</b>, because the server isn't only yours: on shared hosting it
+      also runs other customers' sites, and scanning it means scanning the provider.
+      <button class="ghost small to-own">This is my own server (VPS / dedicated)</button>`;
+  }
+  $(".to-own", box)?.addEventListener("click", async () => {
+    if (!confirm(`Only confirm this if ${d.domain} runs on a server that is yours alone (a VPS or dedicated server you manage).\n\n` +
+      `On shared hosting, a port scan would scan the provider's machine and other customers' sites, which you are not allowed to do.\n\nIs this server yours alone?`)) return;
+    await api("PATCH", `/api/domains/${encodeURIComponent(d.domain)}`, { hosting: "own", confirm: true });
+    select(d.domain);
+  });
+  $(".to-light", box)?.addEventListener("click", async () => {
+    await api("PATCH", `/api/domains/${encodeURIComponent(d.domain)}`, { hosting: "shared" });
+    select(d.domain);
+  });
+}
+
+// ---------- subdomains ----------
+const SUB_STATUS = {
+  ok: "",
+  no_address: `<span class="hint">no address (only in old certificates)</span>`,
+  takeover_risk: `<span class="kev">takeover risk</span>`,
+};
+
+async function renderSubdomains(root, d) {
+  const box = $(".subs", root);
+  box.classList.remove("hidden");
+  const draw = (subs, note = "") => {
+    box.innerHTML = `<div class="row" style="justify-content:space-between;align-items:center">
+        <h3 style="margin:0">Subdomains</h3>
+        <button class="ghost small discover">${subs.length ? "Discover again" : "Discover subdomains"}</button></div>
+      <p class="hint">Found in public certificate logs, DNS records and by trying ~120 common names.
+        Forgotten subdomains are where attackers often get in. ${note}</p>
+      ${subs.length ? `<table class="ports"><tr><th>Name</th><th>Address</th><th>Hosted by</th><th>Found via</th><th></th></tr>
+        ${subs.map((s) => `<tr>
+          <td><b>${esc(s.name)}</b> ${SUB_STATUS[s.status] || ""}
+            ${s.status === "takeover_risk" ? `<div class="hint">Points to ${esc(s.cname)}, which no longer exists.
+              An attacker could claim it and show their page on your subdomain. Remove this DNS record.</div>` : ""}</td>
+          <td class="b">${s.cname ? `→ ${esc(s.cname)}<br>` : ""}${s.ips.map(esc).join("<br>") || "-"}</td>
+          <td>${esc(s.provider || "your own?")}</td>
+          <td class="hint">${s.sources.map(esc).join(", ")}</td>
+          <td>${s.monitored ? `<span class="tag">monitored</span>`
+            : s.status === "takeover_risk" ? "" : `<button class="ghost small mon" data-s="${esc(s.name)}">Monitor</button>`}</td>
+        </tr>`).join("")}</table>` : ""}`;
+    $(".discover", box).onclick = async (e) => {
+      e.target.disabled = true;
+      e.target.textContent = "Searching… (up to a minute)";
+      try {
+        const r = await api("POST", `/api/domains/${encodeURIComponent(d.domain)}/discover`);
+        const off = Object.entries(r.sources).filter(([k, v]) => ["crt.sh", "certspotter"].includes(k) && !v).map(([k]) => k);
+        draw(r.subdomains, (r.new.length ? `<b>${r.new.length} new since last time.</b> ` : "") +
+          (off.length ? `(${off.join(", ")} didn't answer this time.)` : "") +
+          (r.sources.wildcard_dns ? " This domain uses wildcard DNS; guessed names that only hit the wildcard were ignored." : ""));
+      } catch (err) { alert(err.message); draw(subs); }
+    };
+    box.querySelectorAll(".mon").forEach((b) => b.onclick = async () => {
+      try {
+        await api("POST", `/api/domains/${encodeURIComponent(d.domain)}/subdomains/${encodeURIComponent(b.dataset.s)}/monitor`);
+        await loadDomains();
+        draw(await api("GET", `/api/domains/${encodeURIComponent(d.domain)}/subdomains`));
+      } catch (err) { alert(err.message); }
+    });
+  };
+  draw(await api("GET", `/api/domains/${encodeURIComponent(d.domain)}/subdomains`));
 }
 
 // ---------- weekly monitoring ----------
