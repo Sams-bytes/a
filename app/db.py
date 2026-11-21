@@ -66,6 +66,29 @@ CREATE TABLE IF NOT EXISTS cve_cache (
     fetched_at  TEXT NOT NULL,
     data        TEXT NOT NULL           -- JSON answer from NVD
 );
+CREATE TABLE IF NOT EXISTS app_secret (     -- tiny key/value: the server's session-signing key
+    name        TEXT PRIMARY KEY,
+    value       TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS users (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    email       TEXT NOT NULL UNIQUE,
+    pw_hash     TEXT NOT NULL,          -- scrypt hash (hex); never the password itself
+    pw_salt     TEXT NOT NULL,          -- per-user random salt (hex)
+    created_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS orgs (           -- a customer organisation = one locked drawer (tenant)
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS memberships (    -- which user belongs to which org, and their role
+    org_id      INTEGER NOT NULL REFERENCES orgs(id),
+    user_id     INTEGER NOT NULL REFERENCES users(id),
+    role        TEXT NOT NULL,          -- admin | member | viewer
+    created_at  TEXT NOT NULL,
+    PRIMARY KEY (org_id, user_id)
+);
 """
 
 # Migrations: columns added after the first version of the schema.
@@ -305,6 +328,72 @@ class Store:
             self._conn.execute("INSERT OR REPLACE INTO cve_cache(key, fetched_at, data) VALUES (?,?,?)",
                                (key, now(), json.dumps(data)))
             self._conn.commit()
+
+    # ---- app secret (session signing key) ------------------------------
+    def get_or_create_secret(self, name: str, make) -> str:
+        """Return a stored secret, creating it once with make() if absent.
+
+        Used for the session-signing key: generated on first run and kept in
+        aegis.db so login cookies survive a server restart.
+        """
+        with self._lock:
+            row = self._conn.execute("SELECT value FROM app_secret WHERE name=?", (name,)).fetchone()
+            if row:
+                return row["value"]
+            value = make()
+            self._conn.execute("INSERT INTO app_secret(name, value) VALUES (?,?)", (name, value))
+            self._conn.commit()
+            return value
+
+    # ---- users / orgs / memberships ------------------------------------
+    def create_user(self, email: str, pw_hash: str, pw_salt: str) -> dict:
+        with self._lock:
+            cur = self._conn.execute(
+                "INSERT INTO users(email, pw_hash, pw_salt, created_at) VALUES (?,?,?,?)",
+                (email, pw_hash, pw_salt, now()))
+            self._conn.commit()
+            uid = cur.lastrowid
+        return self.get_user(uid)
+
+    def get_user(self, user_id: int) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        return dict(row) if row else None
+
+    def get_user_by_email(self, email: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+        return dict(row) if row else None
+
+    def create_org(self, name: str) -> dict:
+        with self._lock:
+            cur = self._conn.execute("INSERT INTO orgs(name, created_at) VALUES (?,?)", (name, now()))
+            self._conn.commit()
+            oid = cur.lastrowid
+            row = self._conn.execute("SELECT * FROM orgs WHERE id=?", (oid,)).fetchone()
+        return dict(row)
+
+    def add_membership(self, org_id: int, user_id: int, role: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO memberships(org_id, user_id, role, created_at) VALUES (?,?,?,?)",
+                (org_id, user_id, role, now()))
+            self._conn.commit()
+
+    def memberships_for_user(self, user_id: int) -> list[dict]:
+        """Every org this user belongs to, with their role, newest first."""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT o.id AS org_id, o.name AS org_name, m.role
+                   FROM memberships m JOIN orgs o ON o.id = m.org_id
+                   WHERE m.user_id=? ORDER BY o.id""", (user_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_membership(self, org_id: int, user_id: int) -> dict | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM memberships WHERE org_id=? AND user_id=?", (org_id, user_id)).fetchone()
+        return dict(row) if row else None
 
     def mark_alerts_seen(self, domain: str | None = None) -> None:
         with self._lock:
