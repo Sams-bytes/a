@@ -146,6 +146,14 @@ table.ports td.b { font-family: var(--mono); font-size: .8rem; color: var(--mute
 .card.hosting { line-height: 1.6; }
 .card.subs table.ports { margin-top: 8px; }
 
+/* NSE deeper-check cards */
+.card.nse { padding: 14px 16px; }
+.nse-head { font-weight: 600; display: flex; align-items: center; gap: 10px; }
+.card.nse pre { background: var(--bg); padding: 10px; border-radius: 8px; overflow: auto; font-size: .78rem; margin: 8px 0 0; }
+.grade { font-size: .72rem; font-weight: 700; padding: 2px 10px; border-radius: 99px; color: #fff; }
+.grade.good { background: var(--good); } .grade.medium { background: var(--med); }
+.grade.high { background: var(--high); } .grade.critical { background: var(--crit); }
+
 /* live scan progress */
 .card.live { border-left: 4px solid var(--accent); }
 .live-bar { height: 10px; background: var(--bg); border-radius: 99px; overflow: hidden; border: 1px solid var(--line); }

@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 
 import httpx
 
-from app import nmap_engine
+from app import nmap_engine, nse
 from app.findings import build_findings, is_local_scan, score_findings
 from app.fingerprint import detect
 
@@ -200,6 +200,16 @@ def scan(domain: str, timeout: float = 1.5, log=lambda msg: None, matcher=None,
         result["https"] = check_http(domain, https=True)
     if 80 in open_set:
         result["http"] = check_http(domain, https=False)
+
+    nmap = nmap_engine.find_nmap() if (nse.should_run() and os.environ.get("AEGIS_ENGINE", "auto") != "builtin") else None
+    nse_ports = nse.relevant_ports(result["open_ports"]) if nmap else []
+    if nmap and nse_ports:
+        rep(phase="Running safe deep checks (TLS grade, SMB, SSH)", percent=84)
+        log(f"Deeper checks (NSE) on ports {nse_ports}")
+        try:
+            result["nse"] = nse.run(domain, nmap, nse_ports)
+        except (nse.NmapError, ValueError) as e:
+            log(f"NSE skipped: {e}")
 
     result["software"] = detect(result)
     if matcher and result["software"]:

@@ -374,7 +374,38 @@ function renderResult(scan) {
         <td class="b">${esc(p.banner) || "-"}</td></tr>`).join("")}
     </table>` : `<p class="hint">No common ports are open.</p>`}
     ${(r.uncertain_udp || []).length ? `<p class="hint"><b>Uncertain UDP</b> (no answer, so open <i>or</i> blocked by a firewall;
-      UDP can't tell the difference): ${r.uncertain_udp.map((p) => `${p.port} ${esc(p.service)}`).join(", ")}</p>` : ""}`;
+      UDP can't tell the difference): ${r.uncertain_udp.map((p) => `${p.port} ${esc(p.service)}`).join(", ")}</p>` : ""}
+    ${renderNse(r.nse)}`;
+}
+
+const GRADE_CLASS = { A: "good", B: "good", C: "medium", D: "high", E: "high", F: "critical" };
+
+function renderNse(nse) {
+  if (!nse || !nse.ran || !(nse.checks || []).length) return "";
+  const cards = nse.checks.map((c) => {
+    const out = (c.output || "").trim();
+    if (c.id === "ssl-enum-ciphers") {
+      const g = (out.match(/least strength:\s*([A-F])/) || [])[1];
+      return `<div class="card nse"><div class="nse-head">🔒 HTTPS encryption (port ${c.port})
+        ${g ? `<span class="grade ${GRADE_CLASS[g] || ""}">Grade ${g}</span>` : ""}</div>
+        <details><summary>Details</summary><pre>${esc(out)}</pre></details></div>`;
+    }
+    if (c.id.startsWith("smb")) {
+      const bad = /nt lm 0\.12|smbv1/i.test(out) || /not required/i.test(out);
+      return `<div class="card nse"><div class="nse-head">🗂️ SMB (port ${c.port})
+        <span class="grade ${bad ? "high" : "good"}">${bad ? "check" : "ok"}</span></div>
+        <pre>${esc(out)}</pre></div>`;
+    }
+    if (c.id === "http-title") return `<div class="card nse"><div class="nse-head">🌐 Page title</div><pre>${esc(out)}</pre></div>`;
+    if (c.id === "ssh2-enum-algos") {
+      const bad = /sha1|-cbc|hmac-md5|3des|group1/i.test(out);
+      return `<div class="card nse"><div class="nse-head">🔑 SSH algorithms (port ${c.port})
+        <span class="grade ${bad ? "medium" : "good"}">${bad ? "weak found" : "ok"}</span></div>
+        <details><summary>Details</summary><pre>${esc(out)}</pre></details></div>`;
+    }
+    return `<div class="card nse"><div class="nse-head">${esc(c.id)} (port ${c.port ?? "-"})</div><pre>${esc(out)}</pre></div>`;
+  });
+  return `<h3>Deeper checks (safe Nmap scripts)</h3>${cards.join("")}`;
 }
 
 async function removeDomain(domain) {

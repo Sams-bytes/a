@@ -225,6 +225,52 @@ def cve_findings(scan: dict) -> list[dict]:
     return out
 
 
+_TLS_GRADE = {"C": ("medium", 5.3), "D": ("high", 7.0), "E": ("high", 7.4), "F": ("critical", 9.1)}
+
+
+def nse_findings(scan: dict) -> list[dict]:
+    """Findings from the safe Nmap scripts (app/nse.py)."""
+    from app import nse
+    out = []
+    for c in (scan.get("nse") or {}).get("checks", []):
+        port, sid = c["port"], c["id"]
+        if sid == "ssl-enum-ciphers":
+            grade = nse.tls_grade(c["output"])
+            if grade in _TLS_GRADE:
+                sev, cvss = _TLS_GRADE[grade]
+                legacy = " It also still allows old TLS 1.0/1.1 or SSLv3." if nse.has_legacy_tls(c["output"]) else ""
+                f = _f(sev, cvss, f"Weak HTTPS encryption (grade {grade})",
+                       f"Nmap graded this server's HTTPS encryption {grade} (A is best, F worst).{legacy} "
+                       "Weak encryption can let attackers read or tamper with traffic.",
+                       "Allow only TLS 1.2/1.3 and strong ciphers; disable old protocols and weak ciphers "
+                       "(Mozilla's SSL Config Generator gives ready settings).", NIS2_CRYPTO, port)
+                f.update(kind="nse", key=f"nse:tls:{port}")
+                out.append(f)
+        elif sid == "smb-protocols" and nse.smbv1_enabled(c):
+            port = port or 445   # SMB scripts are reported host-level; the port is always 445
+            f = _f("critical", 9.3, "Ancient SMBv1 file sharing is enabled",
+                   "SMBv1 is the 1980s protocol WannaCry used to spread worldwide. It should be off everywhere.",
+                   "Disable SMBv1 (Windows: turn off the 'SMB 1.0/CIFS' feature) and use SMB 2/3 only.",
+                   NIS2_ACCESS, port)
+            f.update(kind="nse", key=f"nse:smbv1:{port}")
+            out.append(f)
+        elif sid == "smb2-security-mode" and nse.signing_not_required(c):
+            port = port or 445
+            f = _f("medium", 5.3, "SMB message signing is not required",
+                   "Without required signing, an attacker on the network can tamper with file-sharing traffic "
+                   "(relay attacks).", "Require SMB signing on the server and clients.", NIS2_ACCESS, port)
+            f.update(kind="nse", key=f"nse:smbsign:{port}")
+            out.append(f)
+        elif sid == "ssh2-enum-algos" and nse.WEAK_SSH.search(c["output"]):
+            f = _f("medium", 5.3, "SSH offers weak algorithms",
+                   "This SSH server still offers outdated key-exchange, cipher or MAC algorithms "
+                   "(e.g. SHA-1, CBC, 3DES) that are considered unsafe.",
+                   "Limit SSH to modern algorithms (disable SHA-1, CBC and 3DES in sshd_config).", NIS2_CRYPTO, port)
+            f.update(kind="nse", key=f"nse:ssh:{port}")
+            out.append(f)
+    return out
+
+
 def build_findings(scan: dict) -> list[dict]:
     out: list[dict] = []
     # Key by (protocol, port): TCP 11211 and UDP 11211 are different "doors".
@@ -284,6 +330,7 @@ def build_findings(scan: dict) -> list[dict]:
             break
 
     out.extend(cve_findings(scan))
+    out.extend(nse_findings(scan))
 
     http = scan.get("http") or {}
     if http and "error" not in http and not http.get("redirects_to_https"):
@@ -306,7 +353,8 @@ def build_findings(scan: dict) -> list[dict]:
         # CVE findings stay as they are - outdated software is a problem even locally.
         def is_port_finding(f):
             key = (f.get("proto") or "tcp", f["port"])
-            return key in open_ports and key not in (("tcp", 80), ("tcp", 443)) and f.get("kind") != "cve"
+            return (key in open_ports and key not in (("tcp", 80), ("tcp", 443))
+                    and f.get("kind") not in ("cve", "nse"))
         out = [_as_local(f, open_ports[(f.get("proto") or "tcp", f["port"])]["service"])
                if is_port_finding(f) else f for f in out]
 
