@@ -43,6 +43,34 @@ def cpe_name(vendor: str, product: str, version: str) -> str:
     return f"cpe:2.3:a:{vendor}:{product}:{version}:{update}:*:*:*:*:*:*"
 
 
+# Nmap sometimes uses older vendor names than NVD does today.
+CPE_ALIASES = {
+    ("igor_sysoev", "nginx"): ("f5", "nginx"),
+    ("nginx", "nginx"): ("f5", "nginx"),
+    ("beasts", "vsftpd"): ("vsftpd_project", "vsftpd"),
+}
+_BY_CPE = {(vendor, product): (pid, name) for pid, name, _rx, vendor, product in PATTERNS}
+
+
+def from_nmap(p: dict) -> dict | None:
+    """Software entry from Nmap's service detection (product/version/CPE) for one port."""
+    text = " ".join(x for x in (p.get("product"), p.get("version"), p.get("extrainfo")) if x)
+    for cpe in p.get("cpe") or []:
+        parts = cpe.split(":")  # Nmap's old format: cpe:/a:vendor:product:version
+        if len(parts) < 4 or parts[1] != "/a":  # /a = application (skip /o = operating system)
+            continue
+        vendor, product = CPE_ALIASES.get((parts[2], parts[3]), (parts[2], parts[3]))
+        version = parts[4] if len(parts) > 4 and parts[4] else (p.get("version") or "").split(" ")[0]
+        if not version or not re.match(r"\d", version):
+            return None  # no version -> nothing to match CVEs against
+        pid, name = _BY_CPE.get((vendor, product), (f"{vendor}:{product}", p.get("product") or product))
+        distro = _DISTRO.search(text)
+        return {"product": pid, "name": name, "version": version, "ports": [p["port"]],
+                "cpe": cpe_name(vendor, product, version), "raw": text[:120],
+                "distro": distro.group(1) if distro else None}
+    return None
+
+
 def _texts(scan: dict) -> list[tuple[int | None, str]]:
     """Every place a server talks about itself: (port, text)."""
     out = [(p["port"], p.get("banner") or "") for p in scan.get("open_ports", [])]
@@ -57,7 +85,13 @@ def _texts(scan: dict) -> list[tuple[int | None, str]]:
 def detect(scan: dict) -> list[dict]:
     """All software we can recognise, one entry per product+version."""
     found: dict[tuple[str, str], dict] = {}
-    for port, text in _texts(scan):
+    for p in scan.get("open_ports", []):  # Nmap's service detection first (most precise)
+        sw = from_nmap(p) if p.get("cpe") else None
+        if sw:
+            existing = found.setdefault((sw["product"], sw["version"]), sw)
+            if existing is not sw and p["port"] not in existing["ports"]:
+                existing["ports"].append(p["port"])
+    for port, text in _texts(scan):  # then banners and web headers
         distro = _DISTRO.search(text)
         for pid, name, rx, vendor, product in PATTERNS:
             m = re.search(rx, text)

@@ -9,11 +9,14 @@ Steps (the same ones a professional scanner runs):
   6. Turn it into findings with a severity, CVSS score and a plain-English fix.
 
 Only ever called for verified domains (see verification.py).
-This is a gentle scan: one TCP connect per port. No exploits, no password guessing.
+Port scanning engine: Nmap when installed (top 1,000 TCP ports + UDP, see
+nmap_engine.py), otherwise a built-in scan of 25 common TCP ports.
+Both are gentle: no exploits, no password guessing.
 """
 
 from __future__ import annotations
 
+import os
 import socket
 import ssl
 from concurrent.futures import ThreadPoolExecutor
@@ -21,6 +24,7 @@ from datetime import datetime, timezone
 
 import httpx
 
+from app import nmap_engine
 from app.findings import build_findings, is_local_scan, score_findings
 from app.fingerprint import detect
 
@@ -126,6 +130,27 @@ def check_http(host: str, https: bool) -> dict:
     }
 
 
+def builtin_ports(domain: str, timeout: float, log) -> list[dict]:
+    log(f"Probing {len(PORTS)} common ports")
+    with ThreadPoolExecutor(max_workers=25) as pool:
+        hits = pool.map(lambda p: probe_port(domain, p, timeout), PORTS)
+    return sorted(({**h, "proto": "tcp"} for h in hits if h), key=lambda h: h["port"])
+
+
+def collect_ports(domain: str, timeout: float, log) -> dict:
+    """Nmap when installed (and AEGIS_ENGINE isn't 'builtin'), else the built-in 25-port scan."""
+    nmap = nmap_engine.find_nmap() if os.environ.get("AEGIS_ENGINE", "auto") != "builtin" else None
+    note = None
+    if nmap:
+        try:
+            return nmap_engine.run(domain, nmap, tcp_names=PORTS, log=log)
+        except (nmap_engine.NmapError, ValueError) as e:
+            note = f"Nmap failed ({e}); used the built-in engine instead."
+            log(note)
+    return {"engine": f"built-in ({len(PORTS)} TCP ports)", "open_ports": builtin_ports(domain, timeout, log),
+            "uncertain_udp": [], "udp": note or "not scanned: the built-in engine checks TCP only (install Nmap)"}
+
+
 def scan(domain: str, timeout: float = 1.5, log=lambda msg: None, matcher=None) -> dict:
     """matcher: an app.cve.Matcher; when given, detected software is checked for CVEs."""
     started = datetime.now(timezone.utc)
@@ -138,11 +163,8 @@ def scan(domain: str, timeout: float = 1.5, log=lambda msg: None, matcher=None) 
         result["score"] = 100
         return result
 
-    log(f"Probing {len(PORTS)} common ports")
-    with ThreadPoolExecutor(max_workers=25) as pool:
-        hits = pool.map(lambda p: probe_port(domain, p, timeout), PORTS)
-    result["open_ports"] = sorted((h for h in hits if h), key=lambda h: h["port"])
-    open_set = {p["port"] for p in result["open_ports"]}
+    result.update(collect_ports(domain, timeout, log))
+    open_set = {p["port"] for p in result["open_ports"] if p.get("proto", "tcp") == "tcp"}
 
     if 443 in open_set:
         log("Checking TLS certificate")
