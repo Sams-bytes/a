@@ -44,6 +44,25 @@ dashboard. The **What changed** card shows the details.
 - Try it: run `.venv\Scripts\python tools\fake_service.py 5432` (a fake database on
   your own computer), then press **Run automatic check now** on localhost.
 
+## Professional scanning with Nmap
+
+When [Nmap](https://nmap.org/download.html) is installed, Aegis uses it automatically:
+
+- **TCP:** Nmap's top 1,000 ports plus Aegis's own high-risk ports (Docker API,
+  Redis, memcached, WinRM, …), with **version detection** (`-sV`). Nmap's
+  product/version/CPE output feeds the CVE matching.
+- **UDP:** 17 important services (DNS, NTP, SNMP, IPMI, SSDP, memcached, VPNs…).
+  Only services that *answer* count as open. Silent ports are listed as
+  "uncertain" (open or blocked: UDP can't tell). Exposed NTP/SSDP/memcached/CLDAP
+  are flagged as **DDoS amplification** risks.
+- Safe by design: no shell (argument list only, target validated twice), no NSE
+  scripts, only `-sT`, `-sV`, `-sU`. UDP may need administrator rights; without
+  them Aegis reports "UDP skipped" and still gives the TCP results.
+- Without Nmap, Aegis uses its built-in scanner (25 TCP ports). Settings:
+  `AEGIS_NMAP` (path to nmap.exe), `AEGIS_ENGINE=builtin` (force the built-in engine).
+- The first Nmap scan after the built-in engine is treated as a new baseline
+  (no "20 new ports!" alert).
+
 ## CVE matching
 
 Many servers announce their software and version (`SSH-2.0-OpenSSH_8.2p1`,
@@ -73,7 +92,8 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 | `start.bat` | One-click launcher for Windows |
 | `app/main.py` | Web server: serves the dashboard and the API |
 | `app/verification.py` | Proves domain ownership via a DNS TXT token |
-| `app/scanner.py` | Resolves DNS, probes 25 common ports, grabs banners, checks TLS and web headers |
+| `app/scanner.py` | Resolves DNS, scans ports (Nmap or built-in), checks TLS and web headers |
+| `app/nmap_engine.py` | Runs Nmap safely (TCP top 1,000 + UDP) and parses its XML |
 | `app/findings.py` | Turns scan data into findings: severity, CVSS, plain-English fix, NIS2 article |
 | `app/fingerprint.py` | Recognises software + version in banners and headers |
 | `app/cve.py`, `app/data/known_cves.json` | CVE matching: built-in list + live NVD (cached) |
@@ -82,7 +102,7 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 | `app/db.py` | Saves domains, scan history and alerts in SQLite (`aegis.db`), with small migrations |
 | `app/static/` | The dashboard (HTML/CSS/JS) |
 | `tools/fake_service.py` | Opens a fake service on a local port (optionally with a banner), for demos |
-| `tests/` | 63 tests, including a real scan of a fake FTP server on localhost |
+| `tests/` | 73 tests, including a real scan of a fake FTP server on localhost |
 
 ## Roadmap
 

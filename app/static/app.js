@@ -225,7 +225,10 @@ function renderResult(scan) {
           `<div class="count"><b class="sev ${k}">${v}</b><span>${k}</span></div>`).join("")}</div>
         <div class="facts">
           IP addresses: ${r.ips.map(esc).join(", ") || "none"}<br>
-          Open ports: ${r.open_ports.map((p) => p.port).join(", ") || "none"}<br>
+          Scan engine: ${esc(r.engine || "built-in (25 TCP ports)")}${(r.engine || "").startsWith("Nmap")
+            ? " · top 1,000 TCP ports + high-risk extras" : " · install Nmap for a professional scan"}<br>
+          UDP: ${r.udp === "ok" ? "17 important services checked" : esc(r.udp || "not scanned")}<br>
+          Open ports: ${r.open_ports.map((p) => `${p.proto === "udp" ? "UDP " : ""}${p.port}`).join(", ") || "none"}<br>
           Software detected: ${(r.software || []).map((s) =>
             `${esc(s.name)} ${esc(s.version)}${s.ports.length ? ` (port ${s.ports.join(", ")})` : ""}`).join(", ") || "none announced"}<br>
           HTTPS: ${tlsText}<br>
@@ -254,9 +257,12 @@ function renderResult(scan) {
         <p class="law">NIS2 ${esc(f.nis2)}${f.port ? ` · port ${f.port}` : ""}</p>
       </div>`).join("") : `<div class="card">No issues found. Nice work.</div>`}
     <h3>Open ports</h3>
-    ${r.open_ports.length ? `<table class="ports"><tr><th>Port</th><th>Service</th><th>Banner</th></tr>
-      ${r.open_ports.map((p) => `<tr><td>${p.port}</td><td>${esc(p.service)}</td><td class="b">${esc(p.banner) || "-"}</td></tr>`).join("")}
-    </table>` : `<p class="hint">No common ports are open.</p>`}`;
+    ${r.open_ports.length ? `<table class="ports"><tr><th>Port</th><th>Proto</th><th>Service</th><th>Software / banner</th></tr>
+      ${r.open_ports.map((p) => `<tr><td>${p.port}</td><td>${(p.proto || "tcp").toUpperCase()}</td><td>${esc(p.service)}</td>
+        <td class="b">${esc(p.banner) || "-"}</td></tr>`).join("")}
+    </table>` : `<p class="hint">No common ports are open.</p>`}
+    ${(r.uncertain_udp || []).length ? `<p class="hint"><b>Uncertain UDP</b> (no answer, so open <i>or</i> blocked by a firewall;
+      UDP can't tell the difference): ${r.uncertain_udp.map((p) => `${p.port} ${esc(p.service)}`).join(", ")}</p>` : ""}`;
 }
 
 async function removeDomain(domain) {
