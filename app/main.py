@@ -17,8 +17,8 @@ from pydantic import BaseModel
 
 from app import monitor
 from app.db import Store
-from app.verification import (InvalidDomain, NotVerified, VerificationService, normalize_domain,
-                              record_value)
+from app.verification import (InvalidDomain, NotVerified, VerificationService, new_token,
+                              normalize_domain, record_value)
 
 STATIC = Path(__file__).parent / "static"
 
@@ -49,12 +49,29 @@ class DomainIn(BaseModel):
 
 
 class DomainSettings(BaseModel):
-    monitor: bool
+    monitor: bool | None = None
+    hosting: str | None = None      # 'own' | 'shared' | 'auto'
+    confirm: bool = False           # required to set hosting='own'
+
+
+def scan_mode(row: dict) -> str:
+    """What the next scan will be: full / light / unknown (hosting not checked yet)."""
+    if row["domain"] == "localhost" or row.get("hosting") == "own":
+        return "full"
+    if row.get("hosting") == "shared":
+        return "light"
+    provider = row.get("hosting_provider")
+    return "unknown" if provider is None else ("light" if provider else "full")
 
 
 def _domain_out(row: dict) -> dict:
     due = monitor.next_due(row, INTERVAL) if row["verified_at"] and row.get("monitor", 1) else None
     return {
+        "parent": row.get("parent"),
+        "hosting": row.get("hosting", "auto"),
+        "hosting_provider": row.get("hosting_provider"),
+        "hosting_confirmed_at": row.get("hosting_confirmed_at"),
+        "scan_mode": scan_mode(row),
         "monitor": bool(row.get("monitor", 1)),
         "next_scan_due": due.isoformat(timespec="seconds") if due else None,
         "domain": row["domain"],
@@ -131,8 +148,82 @@ def update_domain(domain: str, body: DomainSettings):
         _bad_domain(e)
     if not store.get_domain(domain):
         raise HTTPException(status_code=404, detail="Add this domain first.")
-    store.set_monitor(domain, body.monitor)
+    if body.monitor is not None:
+        store.set_monitor(domain, body.monitor)
+    if body.hosting is not None:
+        if body.hosting not in ("own", "shared", "auto"):
+            raise HTTPException(status_code=422, detail="hosting must be own, shared or auto")
+        if body.hosting == "own" and not body.confirm:
+            raise HTTPException(status_code=400, detail=(
+                "Confirm that this server is yours alone (VPS or dedicated). On shared hosting a port "
+                "scan would scan the provider's machine, which you are not allowed to do."))
+        store.set_hosting(domain, body.hosting, confirmed=body.hosting == "own")
+    return _domain_row_out(domain)
+
+
+def _domain_row_out(domain: str) -> dict:
     return next(_domain_out(r) for r in store.list_domains() if r["domain"] == domain)
+
+
+def _verified_root(domain: str) -> str:
+    try:
+        domain = normalize_domain(domain)
+    except InvalidDomain as e:
+        _bad_domain(e)
+    row = store.get_domain(domain)
+    if not row or not row["verified_at"]:
+        raise HTTPException(status_code=403, detail="Verify this domain first.")
+    if domain == "localhost" or row.get("parent"):
+        raise HTTPException(status_code=400, detail="Subdomain discovery works on your verified main domain.")
+    return domain
+
+
+@app.post("/api/domains/{domain}/hosting-check")
+def hosting_check(domain: str):
+    """Who hosts this domain? (RDAP lookup of its IP addresses.)"""
+    try:
+        domain = verifier.require_verified(domain)
+    except (InvalidDomain, NotVerified):
+        raise HTTPException(status_code=403, detail="Verify this domain first.")
+    if domain != "localhost":
+        monitor.check_hosting(store, domain)
+    return _domain_row_out(domain)
+
+
+# ---- subdomains ------------------------------------------------------------
+@app.post("/api/domains/{domain}/discover")
+def discover(domain: str):
+    domain = _verified_root(domain)
+    res = monitor.run_discovery(store, domain, alert=False)
+    return {"subdomains": store.list_subdomains(domain), "new": res["new"], "sources": res["sources"]}
+
+
+@app.get("/api/domains/{domain}/subdomains")
+def list_subdomains(domain: str):
+    try:
+        return store.list_subdomains(normalize_domain(domain))
+    except InvalidDomain as e:
+        _bad_domain(e)
+
+
+@app.post("/api/domains/{domain}/subdomains/{sub}/monitor")
+def monitor_subdomain(domain: str, sub: str):
+    """Start monitoring a discovered subdomain. Ownership is covered by the parent's TXT record."""
+    domain = _verified_root(domain)
+    sub = normalize_domain(sub)
+    found = next((s for s in store.list_subdomains(domain) if s["name"] == sub), None)
+    if not found:
+        raise HTTPException(status_code=404, detail="Discover subdomains first.")
+    if found["status"] == "takeover_risk":
+        raise HTTPException(status_code=409, detail=(
+            f"{sub} points to a service that no longer exists. Remove or fix that DNS record first - "
+            f"there is nothing of yours to scan there, and an attacker could claim it."))
+    if not store.get_domain(sub):
+        store.add_domain(sub, new_token(), parent=domain)
+        store.mark_verified(sub)
+        if found.get("provider"):
+            store.set_hosting(sub, provider=found["provider"])
+    return _domain_row_out(sub)
 
 
 # ---- monitoring & alerts ---------------------------------------------------

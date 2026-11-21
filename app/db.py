@@ -35,6 +35,18 @@ CREATE TABLE IF NOT EXISTS alerts (
     details     TEXT NOT NULL,          -- JSON list of plain-English lines
     seen_at     TEXT
 );
+CREATE TABLE IF NOT EXISTS subdomains (
+    parent      TEXT NOT NULL,          -- the verified root domain, e.g. dam-bv.com
+    name        TEXT NOT NULL,          -- e.g. www.dam-bv.com
+    first_seen  TEXT NOT NULL,
+    last_seen   TEXT NOT NULL,
+    sources     TEXT NOT NULL,          -- JSON list: certificates / dns / guess
+    ips         TEXT NOT NULL,          -- JSON list
+    cname       TEXT,
+    provider    TEXT,                   -- who hosts it (None = probably your own)
+    status      TEXT NOT NULL,          -- ok / no_address / takeover_risk
+    PRIMARY KEY (parent, name)
+);
 CREATE TABLE IF NOT EXISTS cve_cache (
     key         TEXT PRIMARY KEY,       -- e.g. a CPE name like cpe:2.3:a:apache:http_server:2.4.49:...
     fetched_at  TEXT NOT NULL,
@@ -48,6 +60,10 @@ CREATE TABLE IF NOT EXISTS cve_cache (
 _MIGRATIONS = [
     ("domains", "monitor", "INTEGER NOT NULL DEFAULT 1"),   # 1 = weekly scans on
     ("scans", "source", "TEXT NOT NULL DEFAULT 'manual'"),  # 'manual' or 'scheduled'
+    ("domains", "parent", "TEXT"),                          # set for monitored subdomains
+    ("domains", "hosting", "TEXT NOT NULL DEFAULT 'auto'"), # auto / own / shared
+    ("domains", "hosting_provider", "TEXT"),                # e.g. 'Hostinger'
+    ("domains", "hosting_confirmed_at", "TEXT"),            # when the owner said "my own server"
 ]
 
 
@@ -77,14 +93,25 @@ class Store:
             row = self._conn.execute("SELECT * FROM domains WHERE domain=?", (domain,)).fetchone()
         return dict(row) if row else None
 
-    def add_domain(self, domain: str, token: str) -> dict:
+    def add_domain(self, domain: str, token: str, parent: str | None = None) -> dict:
         with self._lock:
             self._conn.execute(
-                "INSERT OR REPLACE INTO domains(domain, token, created_at, verified_at) VALUES (?,?,?,NULL)",
-                (domain, token, now()),
+                "INSERT OR REPLACE INTO domains(domain, token, created_at, verified_at, parent) VALUES (?,?,?,NULL,?)",
+                (domain, token, now(), parent),
             )
             self._conn.commit()
         return self.get_domain(domain)
+
+    def set_hosting(self, domain: str, hosting: str | None = None, provider: str | None = None,
+                    confirmed: bool = False) -> None:
+        """hosting: 'auto' / 'own' / 'shared' (None = leave as is); provider: what RDAP said."""
+        with self._lock:
+            if hosting is not None:
+                self._conn.execute("UPDATE domains SET hosting=?, hosting_confirmed_at=? WHERE domain=?",
+                                   (hosting, now() if confirmed else None, domain))
+            if provider is not None:
+                self._conn.execute("UPDATE domains SET hosting_provider=? WHERE domain=?", (provider, domain))
+            self._conn.commit()
 
     def mark_verified(self, domain: str) -> None:
         with self._lock:
@@ -116,11 +143,52 @@ class Store:
         return [d for d in self.list_domains() if d["verified_at"] and d["monitor"]]
 
     def delete_domain(self, domain: str) -> None:
+        """Delete a domain, its scans and alerts - and its monitored subdomains too."""
         with self._lock:
-            self._conn.execute("DELETE FROM alerts WHERE domain=?", (domain,))
-            self._conn.execute("DELETE FROM scans WHERE domain=?", (domain,))
-            self._conn.execute("DELETE FROM domains WHERE domain=?", (domain,))
+            children = [r["domain"] for r in self._conn.execute("SELECT domain FROM domains WHERE parent=?", (domain,))]
+            for d in [*children, domain]:
+                self._conn.execute("DELETE FROM alerts WHERE domain=?", (d,))
+                self._conn.execute("DELETE FROM scans WHERE domain=?", (d,))
+                self._conn.execute("DELETE FROM domains WHERE domain=?", (d,))
+            self._conn.execute("DELETE FROM subdomains WHERE parent=?", (domain,))
             self._conn.commit()
+
+    # ---- discovered subdomains -----------------------------------------
+    def save_subdomains(self, parent: str, rows: list[dict]) -> list[str]:
+        """Insert/update discovered subdomains. Returns names seen for the FIRST time."""
+        new = []
+        with self._lock:
+            for r in rows:
+                exists = self._conn.execute("SELECT 1 FROM subdomains WHERE parent=? AND name=?",
+                                            (parent, r["name"])).fetchone()
+                if exists:
+                    self._conn.execute(
+                        """UPDATE subdomains SET last_seen=?, sources=?, ips=?, cname=?, provider=?, status=?
+                           WHERE parent=? AND name=?""",
+                        (now(), json.dumps(r["sources"]), json.dumps(r["ips"]), r.get("cname"),
+                         r.get("provider"), r["status"], parent, r["name"]))
+                else:
+                    new.append(r["name"])
+                    self._conn.execute(
+                        """INSERT INTO subdomains(parent, name, first_seen, last_seen, sources, ips, cname, provider, status)
+                           VALUES (?,?,?,?,?,?,?,?,?)""",
+                        (parent, r["name"], now(), now(), json.dumps(r["sources"]), json.dumps(r["ips"]),
+                         r.get("cname"), r.get("provider"), r["status"]))
+            self._conn.commit()
+        return new
+
+    def list_subdomains(self, parent: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT s.*, d.domain IS NOT NULL AS monitored FROM subdomains s
+                   LEFT JOIN domains d ON d.domain = s.name AND d.parent = s.parent
+                   WHERE s.parent=? ORDER BY s.status != 'takeover_risk', s.name""", (parent,)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["sources"], d["ips"], d["monitored"] = json.loads(d["sources"]), json.loads(d["ips"]), bool(d["monitored"])
+            out.append(d)
+        return out
 
     # ---- scans ---------------------------------------------------------
     def add_scan(self, domain: str, started_at: str, result: dict, source: str = "manual") -> int:

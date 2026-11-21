@@ -121,6 +121,8 @@ class VerificationService:
         row = self.store.get_domain(domain)
         if not row:
             return False
+        if row.get("parent"):  # a monitored subdomain is covered by its parent's record
+            return self.reverify(row["parent"])
         records = [r.strip() for r in self._lookup(domain)]
         return record_value(row["token"]) in records
 

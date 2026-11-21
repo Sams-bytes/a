@@ -151,8 +151,19 @@ def collect_ports(domain: str, timeout: float, log) -> dict:
             "uncertain_udp": [], "udp": note or "not scanned: the built-in engine checks TCP only (install Nmap)"}
 
 
-def scan(domain: str, timeout: float = 1.5, log=lambda msg: None, matcher=None) -> dict:
-    """matcher: an app.cve.Matcher; when given, detected software is checked for CVEs."""
+def light_ports(domain: str, timeout: float, provider: str | None) -> dict:
+    """Light scan: only what a browser visit touches (the website on 443 and 80). No port scan,
+    because the server isn't only the customer's (shared hosting / cloud provider)."""
+    hits = [probe_port(domain, p, max(timeout, 3)) for p in (443, 80)]
+    return {"engine": f"light (no port scan: hosted by {provider or 'a hosting provider'})",
+            "open_ports": [{**h, "proto": "tcp"} for h in hits if h],
+            "uncertain_udp": [], "udp": "not scanned: light scan", "mode": "light"}
+
+
+def scan(domain: str, timeout: float = 1.5, log=lambda msg: None, matcher=None,
+         mode: str = "full", provider: str | None = None) -> dict:
+    """matcher: an app.cve.Matcher; when given, detected software is checked for CVEs.
+    mode: 'full' (port scan) or 'light' (website only, for servers you don't solely own)."""
     started = datetime.now(timezone.utc)
     log(f"Resolving DNS for {domain}")
     ips = resolve(domain)
@@ -163,7 +174,12 @@ def scan(domain: str, timeout: float = 1.5, log=lambda msg: None, matcher=None) 
         result["score"] = 100
         return result
 
-    result.update(collect_ports(domain, timeout, log))
+    if mode == "light":
+        log(f"Light scan of {domain}: website only, no port scan")
+        result.update(light_ports(domain, timeout, provider))
+    else:
+        result.update(collect_ports(domain, timeout, log))
+        result["mode"] = "full"
     open_set = {p["port"] for p in result["open_ports"] if p.get("proto", "tcp") == "tcp"}
 
     if 443 in open_set:

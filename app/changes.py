@@ -19,6 +19,8 @@ def _key(f: dict) -> tuple:
 
 
 def _engine_family(r: dict) -> str:
+    if r.get("mode") == "light":
+        return "light"
     return "nmap" if str(r.get("engine", "")).startswith("Nmap") else "builtin"
 
 
@@ -74,7 +76,7 @@ def describe(ch: dict) -> list[str]:
     """Plain-English lines for an alert."""
     lines = []
     if ch.get("engine_changed"):
-        lines.append("Scan engine changed (e.g. Nmap installed): this scan is the new baseline, "
+        lines.append("Scan type changed (e.g. Nmap installed, or light <-> full scan): this scan is the new baseline, "
                      "differences below are from looking more closely, not from changes on the server")
     for p in ch["new_ports"]:
         lines.append(f"New open {_label(p)} ({p.get('service', '?')})")
