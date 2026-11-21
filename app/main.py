@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import monitor
+from app import monitor, netmap
 from app.db import Store
 from app.verification import (InvalidDomain, NotVerified, VerificationService, new_token,
                               normalize_domain, record_value)
@@ -250,6 +250,48 @@ def list_alerts():
 def alerts_seen(domain: str | None = None):
     store.mark_alerts_seen(domain)
     return {"ok": True}
+
+
+# ---- network map (your own local network) ----------------------------------
+class NetworkScan(BaseModel):
+    cidr: str
+    confirm: bool = False       # "this network is mine and I'm allowed to scan it"
+    deep: bool = False          # also detect open ports + OS (slower; OS needs admin)
+
+
+@app.get("/api/network/interfaces")
+def network_interfaces():
+    nmap = netmap.find_nmap()
+    nets = netmap.local_networks(nmap) if nmap else []
+    for n in nets:
+        n["scanned"] = store.get_netscan(n["cidr"]) is not None
+    return {"nmap": bool(nmap), "admin": netmap.is_admin(), "networks": nets}
+
+
+@app.post("/api/network/scan")
+def network_scan(body: NetworkScan):
+    if not netmap.find_nmap():
+        raise HTTPException(status_code=400, detail="Nmap is not installed. Install it from https://nmap.org to map your network.")
+    try:
+        netmap.validate_cidr(body.cidr)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail=(
+            "Confirm this is your own network (home or office) that you are allowed to scan. "
+            "Scanning someone else's network without permission is illegal."))
+    try:
+        return netmap.run(body.cidr, store, deep=body.deep)
+    except netmap.NmapError as e:
+        raise HTTPException(status_code=502, detail=f"Network scan failed: {e}")
+
+
+@app.get("/api/network/last")
+def network_last(cidr: str):
+    scan = store.get_netscan(cidr)
+    if not scan:
+        raise HTTPException(status_code=404, detail="This network hasn't been scanned yet.")
+    return scan
 
 
 @app.get("/api/domains/{domain}/scans")

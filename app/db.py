@@ -47,6 +47,20 @@ CREATE TABLE IF NOT EXISTS subdomains (
     status      TEXT NOT NULL,          -- ok / no_address / takeover_risk
     PRIMARY KEY (parent, name)
 );
+CREATE TABLE IF NOT EXISTS netscans (
+    cidr        TEXT PRIMARY KEY,       -- the local network, e.g. 192.168.1.0/24
+    scanned_at  TEXT NOT NULL,
+    admin       INTEGER NOT NULL,       -- was the scan run with admin rights?
+    result      TEXT NOT NULL           -- JSON map (devices etc.)
+);
+CREATE TABLE IF NOT EXISTS known_devices (
+    cidr        TEXT NOT NULL,
+    mac         TEXT NOT NULL,
+    name        TEXT,
+    first_seen  TEXT NOT NULL,
+    last_seen   TEXT NOT NULL,
+    PRIMARY KEY (cidr, mac)
+);
 CREATE TABLE IF NOT EXISTS cve_cache (
     key         TEXT PRIMARY KEY,       -- e.g. a CPE name like cpe:2.3:a:apache:http_server:2.4.49:...
     fetched_at  TEXT NOT NULL,
@@ -243,6 +257,38 @@ class Store:
             d["details"] = json.loads(d["details"])
             out.append(d)
         return out
+
+    # ---- network map ---------------------------------------------------
+    def save_netscan(self, cidr: str, admin: bool, result: dict) -> None:
+        with self._lock:
+            self._conn.execute("INSERT OR REPLACE INTO netscans(cidr, scanned_at, admin, result) VALUES (?,?,?,?)",
+                               (cidr, now(), 1 if admin else 0, json.dumps(result)))
+            self._conn.commit()
+
+    def get_netscan(self, cidr: str) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT result FROM netscans WHERE cidr=?", (cidr,)).fetchone()
+        return json.loads(row["result"]) if row else None
+
+    def save_devices(self, cidr: str, devices: list[dict]) -> list[str]:
+        """Remember devices by MAC. Returns MACs seen on this network for the FIRST time."""
+        new = []
+        with self._lock:
+            for d in devices:
+                mac = d.get("mac")
+                if not mac:
+                    continue
+                row = self._conn.execute("SELECT 1 FROM known_devices WHERE cidr=? AND mac=?", (cidr, mac)).fetchone()
+                if row:
+                    self._conn.execute("UPDATE known_devices SET last_seen=?, name=COALESCE(name, ?) WHERE cidr=? AND mac=?",
+                                       (now(), d.get("hostname"), cidr, mac))
+                else:
+                    new.append(mac)
+                    self._conn.execute(
+                        "INSERT INTO known_devices(cidr, mac, name, first_seen, last_seen) VALUES (?,?,?,?,?)",
+                        (cidr, mac, d.get("hostname"), now(), now()))
+            self._conn.commit()
+        return new
 
     # ---- CVE cache -----------------------------------------------------
     def get_cache(self, key: str, max_age_s: float):
