@@ -89,6 +89,15 @@ CREATE TABLE IF NOT EXISTS memberships (    -- which user belongs to which org, 
     created_at  TEXT NOT NULL,
     PRIMARY KEY (org_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS projects (       -- an assessment engagement: a scope + who authorised it
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    org_id        INTEGER NOT NULL,
+    name          TEXT NOT NULL,
+    authorized_by TEXT,                 -- the person who signed off on scanning this scope
+    scope_note    TEXT,                 -- free text: what is in scope, caveats, ticket ref…
+    authorized_at TEXT,
+    created_at    TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS audit_events (   -- who did what, when: a tamper-evident trail per org
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     org_id      INTEGER NOT NULL,
@@ -119,6 +128,7 @@ _MIGRATIONS = [
     ("subdomains", "org_id", "INTEGER NOT NULL DEFAULT 1"),
     ("netscans", "org_id", "INTEGER NOT NULL DEFAULT 1"),
     ("known_devices", "org_id", "INTEGER NOT NULL DEFAULT 1"),
+    ("domains", "project_id", "INTEGER"),   # which engagement a domain belongs to (optional)
 ]
 
 # Single-tenant / test convenience: calls that don't name an org act on org 1.
@@ -466,6 +476,45 @@ class Store:
             rows = self._conn.execute("SELECT * FROM orgs ORDER BY id").fetchall()
         return [dict(r) for r in rows]
 
+    # ---- projects (assessment engagements) -----------------------------
+    def create_project(self, name: str, authorized_by: str | None = None,
+                       scope_note: str | None = None, org_id: int = DEFAULT_ORG) -> dict:
+        with self._lock:
+            cur = self._conn.execute(
+                """INSERT INTO projects(org_id, name, authorized_by, scope_note, authorized_at, created_at)
+                   VALUES (?,?,?,?,?,?)""",
+                (org_id, name, authorized_by, scope_note, now() if authorized_by else None, now()))
+            self._conn.commit()
+            pid = cur.lastrowid
+        return self.get_project(pid, org_id)
+
+    def get_project(self, project_id: int, org_id: int = DEFAULT_ORG) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM projects WHERE id=? AND org_id=?",
+                                     (project_id, org_id)).fetchone()
+        return dict(row) if row else None
+
+    def list_projects(self, org_id: int = DEFAULT_ORG) -> list[dict]:
+        """Projects in this org, each with how many domains it holds."""
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT p.*, (SELECT COUNT(*) FROM domains d WHERE d.project_id=p.id AND d.org_id=p.org_id)
+                       AS domain_count
+                   FROM projects p WHERE p.org_id=? ORDER BY p.id DESC""", (org_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def set_domain_project(self, domain: str, project_id: int | None, org_id: int = DEFAULT_ORG) -> None:
+        with self._lock:
+            # Only assign a project that belongs to the same org (never cross-org).
+            if project_id is not None:
+                ok = self._conn.execute("SELECT 1 FROM projects WHERE id=? AND org_id=?",
+                                        (project_id, org_id)).fetchone()
+                if not ok:
+                    raise ValueError("No such project in this organisation.")
+            self._conn.execute("UPDATE domains SET project_id=? WHERE domain=? AND org_id=?",
+                               (project_id, domain, org_id))
+            self._conn.commit()
+
     # ---- audit log -----------------------------------------------------
     def add_audit(self, org_id: int, user_id: int | None, action: str,
                   target: str | None = None, detail: str | None = None) -> None:
@@ -503,6 +552,7 @@ class OrgStore:
         "save_subdomains", "list_subdomains", "add_scan", "list_scans", "get_scan",
         "latest_scan", "add_alert", "list_alerts", "save_netscan", "get_netscan",
         "save_devices", "mark_alerts_seen",
+        "create_project", "get_project", "list_projects", "set_domain_project",
     }
 
     def __init__(self, store: Store, org_id: int):

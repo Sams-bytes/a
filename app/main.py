@@ -99,6 +99,16 @@ class Credentials(BaseModel):
     org_name: str | None = None     # only used on sign-up
 
 
+class ProjectIn(BaseModel):
+    name: str
+    authorized_by: str | None = None
+    scope_note: str | None = None
+
+
+class ProjectAssign(BaseModel):
+    project_id: int | None = None   # null detaches the domain from any project
+
+
 def scan_mode(row: dict) -> str:
     """What the next scan will be: full / light / unknown (hosting not checked yet)."""
     if row["domain"] == "localhost" or row.get("hosting") == "own":
@@ -113,6 +123,7 @@ def _domain_out(row: dict) -> dict:
     due = monitor.next_due(row, INTERVAL) if row["verified_at"] and row.get("monitor", 1) else None
     return {
         "parent": row.get("parent"),
+        "project_id": row.get("project_id"),
         "hosting": row.get("hosting", "auto"),
         "hosting_provider": row.get("hosting_provider"),
         "hosting_confirmed_at": row.get("hosting_confirmed_at"),
@@ -200,6 +211,38 @@ def me(ctx: Ctx = Depends(get_ctx)):
 @app.get("/api/audit")
 def audit_log(ctx: Ctx = Depends(get_ctx)):
     return store.list_audit(ctx.org_id)
+
+
+# ---- projects (assessment engagements + authorised scope) ------------------
+@app.get("/api/projects")
+def list_projects(ctx: Ctx = Depends(get_ctx)):
+    return ctx.store.list_projects()
+
+
+@app.post("/api/projects")
+def create_project(body: ProjectIn, ctx: Ctx = Depends(get_ctx)):
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="A project needs a name.")
+    p = ctx.store.create_project(name, body.authorized_by, body.scope_note)
+    ctx.audit("create_project", name, body.authorized_by)
+    return p
+
+
+@app.post("/api/domains/{domain}/project")
+def assign_project(domain: str, body: ProjectAssign, ctx: Ctx = Depends(get_ctx)):
+    try:
+        domain = normalize_domain(domain)
+    except InvalidDomain as e:
+        _bad_domain(e)
+    if not ctx.store.get_domain(domain):
+        raise HTTPException(status_code=404, detail="Add this domain first.")
+    try:
+        ctx.store.set_domain_project(domain, body.project_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    ctx.audit("assign_project", domain, str(body.project_id) if body.project_id else "none")
+    return _domain_row_out(ctx, domain)
 
 
 # ---- domains ---------------------------------------------------------------

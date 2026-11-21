@@ -215,3 +215,9 @@ table.ports td.b { font-family: var(--mono); font-size: .8rem; color: var(--mute
   color: var(--accent-ink); font-weight: 600; cursor: pointer;
 }
 .auth-form .msg { min-height: 1em; color: var(--crit); font-size: 13px; margin: 2px 0 0; }
+
+.projbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 14px; }
+.projbar select {
+  padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px;
+  background: var(--bg); color: var(--ink); font: inherit;
+}

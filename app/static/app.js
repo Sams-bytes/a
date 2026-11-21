@@ -16,8 +16,31 @@ const scoreColor = (s) => s >= 80 ? "var(--good)" : s >= 60 ? "var(--med)" : s >
 const scoreLabel = (s) => s >= 80 ? "Good" : s >= 60 ? "Moderate risk" : s >= 40 ? "High risk" : "Critical risk";
 
 let domains = [];
+let projects = [];
 let current = null;
 let trafficTimer = null;   // the "Live traffic" view auto-refreshes; this lets us stop it
+
+async function loadProjects() {
+  try { projects = await api("GET", "/api/projects"); } catch { projects = []; }
+}
+
+// A dropdown that puts a domain into an assessment project (authorised scope).
+function insertProjectBar(root, d) {
+  const opts = ['<option value="">— no project —</option>'].concat(
+    projects.map((p) => `<option value="${p.id}" ${p.id === d.project_id ? "selected" : ""}>${esc(p.name)}</option>`)).join("");
+  const bar = document.createElement("div");
+  bar.className = "card projbar";
+  bar.innerHTML = `<label><b>Project:</b> <select class="proj-select">${opts}</select></label>
+    <span class="hint">Group this domain under an engagement with a written authorisation.
+    Manage projects in the <b>🗂 Projects</b> view.</span>`;
+  const anchor = root.querySelector(".head") || root.firstElementChild;
+  anchor ? anchor.after(bar) : root.prepend(bar);
+  bar.querySelector(".proj-select").onchange = async (e) => {
+    const v = e.target.value ? Number(e.target.value) : null;
+    try { await api("POST", `/api/domains/${encodeURIComponent(d.domain)}/project`, { project_id: v }); await loadProjects(); }
+    catch (err) { alert(err.message); }
+  };
+}
 
 // ---------- theme ----------
 try { const t = localStorage.getItem("aegis-theme"); if (t) document.documentElement.dataset.theme = t; } catch {}
@@ -77,6 +100,7 @@ function renderUnverified(root, d) {
   $(".rvalue", root).textContent = d.record_value;
   $(".copy", root).onclick = () => navigator.clipboard?.writeText(d.record_value);
   $(".remove", root).onclick = () => removeDomain(d.domain);
+  insertProjectBar(root, d);
   $(".check", root).onclick = async (e) => {
     e.target.disabled = true;
     const msg = $(".msg", root);
@@ -95,6 +119,7 @@ async function renderVerified(root, d) {
   $(".dname", root).textContent = d.domain;
   $(".remove", root).onclick = () => removeDomain(d.domain);
   $(".scan", root).onclick = (e) => runScan(d.domain, e.target);
+  insertProjectBar(root, d);
   renderMonitor(root, d);
   renderHosting(root, d);
   if (!d.parent && d.domain !== "localhost") renderSubdomains(root, d);
@@ -570,6 +595,49 @@ function drawTraffic(t) {
 $("#netmap-btn").onclick = openNetwork;
 $("#traffic-btn").onclick = openTraffic;
 $("#audit-btn").onclick = openAudit;
+$("#projects-btn").onclick = openProjects;
+
+// ---------- projects (assessment engagements) ----------
+async function openProjects() {
+  current = null;
+  loadDomains();
+  await loadProjects();
+  const detail = $("#detail");
+  detail.innerHTML = `<div class="card"><h1>🗂 Projects</h1>
+    <p class="hint">An engagement folder for the domains you assess for one client, with a record of
+    who authorised it. DNS ownership proves you <i>can</i> scan; the authorisation records that you were
+    <i>asked</i> to — the paperwork a real security assessment needs.</p>
+    <form id="proj-form" class="add" style="flex-wrap:wrap;gap:8px">
+      <input id="proj-name" placeholder="Project name (e.g. Acme Q1 review)" required>
+      <input id="proj-by" placeholder="Authorised by (name / role)">
+      <input id="proj-note" placeholder="Scope note (what's in scope, caveats, ticket)" style="flex:1 1 100%">
+      <button type="submit">Create project</button>
+    </form>
+    <div id="proj-list"></div></div>`;
+  $("#proj-form").onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await api("POST", "/api/projects", {
+        name: $("#proj-name").value, authorized_by: $("#proj-by").value || null,
+        scope_note: $("#proj-note").value || null });
+      openProjects();
+    } catch (err) { alert(err.message); }
+  };
+  renderProjectList();
+}
+
+function renderProjectList() {
+  const box = $("#proj-list");
+  if (!box) return;
+  box.innerHTML = projects.length ? `<table class="ports">
+    <tr><th>Project</th><th>Authorised by</th><th>Scope note</th><th>Domains</th></tr>
+    ${projects.map((p) => `<tr>
+      <td><b>${esc(p.name)}</b></td>
+      <td>${esc(p.authorized_by || "—")}</td>
+      <td>${esc(p.scope_note || "")}</td>
+      <td class="b">${p.domain_count}</td></tr>`).join("")}</table>`
+    : `<p class="hint">No projects yet. Create one above, then pick it on a domain's page.</p>`;
+}
 
 // ---------- audit log ----------
 async function openAudit() {
@@ -631,6 +699,7 @@ $("#logout").onclick = async () => {
 function startApp(me) {
   $("#whoami").textContent = `${me.email} · ${me.org_name || ""}`;
   $("#logout").classList.remove("hidden");
+  loadProjects();
   loadDomains().then(() => { if (domains[0]) select(domains[0].domain); });
   loadAlerts();
 }
