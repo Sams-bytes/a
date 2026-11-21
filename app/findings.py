@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import ipaddress
 
+from app import cve
+
 NIS2_ACCESS = "Art. 21(2)(i) access control"
 NIS2_CRYPTO = "Art. 21(2)(h) cryptography & encryption"
 NIS2_VULN = "Art. 21(2)(e) secure systems & vulnerability handling"
@@ -207,9 +209,13 @@ def cve_findings(scan: dict) -> list[dict]:
         if kev:
             title += f" ({len(kev)} actively exploited)"
         worst = cves[0]
+        epss = cve.top_epss(cves)
         what = (f"This version has publicly known security holes. "
                 f"Most urgent: {worst['id']} (CVSS {worst['cvss']}"
                 f"{', actively exploited' if worst['kev'] else ''}): {worst['summary']}")
+        if epss is not None:
+            what += (f" The most likely of these to be attacked has about a "
+                     f"{round(epss * 100)}% chance of exploitation in the next 30 days (EPSS).")
         fix = (f"Update {item['name']} to {item['fix_version']} or newer."
                if item.get("fix_version") else f"Update {item['name']} to the latest version.")
         if item.get("distro"):
@@ -218,8 +224,10 @@ def cve_findings(scan: dict) -> list[dict]:
                     f"some of these may already be fixed.")
         fix += " Also consider hiding the version number in the banner."
         f = _f(severity, top, title, what, fix, NIS2_VULN, port=(item.get("ports") or [None])[0])
-        f.update(kind="cve", key=f"cve:{item['product']}:{item['version']}:{','.join(sorted(c['id'] for c in cves))}",
+        f.update(kind="cve", epss=epss,
+                 key=f"cve:{item['product']}:{item['version']}:{','.join(sorted(c['id'] for c in cves))}",
                  cves=[{"id": c["id"], "cvss": c["cvss"], "kev": c["kev"], "summary": c["summary"],
+                        "epss": c.get("epss"),
                         "url": f"https://nvd.nist.gov/vuln/detail/{c['id']}"} for c in cves])
         out.append(f)
     return out

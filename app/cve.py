@@ -35,6 +35,7 @@ from app.db import Store
 BUILTIN_FILE = Path(__file__).parent / "data" / "known_cves.json"
 CACHE_S = 24 * 3600
 NVD_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+EPSS_URL = "https://api.first.org/data/v1/epss"
 
 
 # ---- version comparison -------------------------------------------------------
@@ -130,6 +131,40 @@ class NVDClient:
         return [parse_nvd_cve(v["cve"], vendor_product) for v in data.get("vulnerabilities", [])]
 
 
+# ---- source 3: EPSS (how LIKELY is a CVE to be exploited?) -----------------------
+class EPSSClient:
+    """FIRST.org's EPSS: a 0-1 probability a CVE will be exploited in the next 30
+    days. Free, no key. Only CVE ids leave the machine (never the domain)."""
+
+    def __init__(self, http_get=httpx.get):
+        self._get = http_get
+
+    def lookup(self, cve_ids: list[str]) -> dict | None:
+        """{cve_id: probability}. None on failure. Unknown CVEs are simply absent."""
+        out: dict[str, float] = {}
+        ids = sorted(set(cve_ids))
+        for i in range(0, len(ids), 100):          # the API takes up to ~100 ids per call
+            batch = ids[i:i + 100]
+            try:
+                r = self._get(EPSS_URL, params={"cve": ",".join(batch)}, timeout=20)
+                r.raise_for_status()
+                data = r.json()
+            except (httpx.HTTPError, ValueError):
+                return None
+            for row in data.get("data", []):
+                try:
+                    out[row["cve"]] = float(row["epss"])
+                except (KeyError, TypeError, ValueError):
+                    pass
+        return out
+
+
+def top_epss(cves: list[dict]) -> float | None:
+    """The highest exploit probability among a product's CVEs (None if unknown)."""
+    vals = [c["epss"] for c in cves if c.get("epss") is not None]
+    return max(vals) if vals else None
+
+
 # ---- merge both sources ---------------------------------------------------------
 def fix_version(version: str, cves: list[dict]) -> str | None:
     """Lowest version that fixes ALL listed CVEs (as far as we know)."""
@@ -142,10 +177,12 @@ def fix_version(version: str, cves: list[dict]) -> str | None:
 
 
 class Matcher:
-    def __init__(self, store: Store, nvd: NVDClient | None = None, live: bool | None = None):
+    def __init__(self, store: Store, nvd: NVDClient | None = None, live: bool | None = None,
+                 epss: EPSSClient | None = None):
         self.store = store
         self.live = live if live is not None else os.environ.get("AEGIS_CVE_LIVE", "1") != "0"
         self.nvd = nvd or NVDClient()
+        self.epss = epss or EPSSClient()
         self.builtin = load_builtin()
 
     def _live(self, cpe: str) -> list[dict] | None:
@@ -156,6 +193,23 @@ class Matcher:
         if fresh is not None:
             self.store.set_cache(cpe, fresh)
         return fresh
+
+    def _epss(self, cve_ids: list[str]) -> dict:
+        """EPSS probabilities for these CVEs, cached per-CVE for 24 h. {} if unreachable."""
+        scores, missing = {}, []
+        for cid in set(cve_ids):
+            cached = self.store.get_cache(f"epss:{cid}", CACHE_S)
+            if cached is not None:
+                scores[cid] = cached.get("epss")
+            else:
+                missing.append(cid)
+        if missing:
+            fresh = self.epss.lookup(missing)
+            if fresh is not None:
+                for cid in missing:                     # cache a null too, so we don't re-ask daily
+                    scores[cid] = fresh.get(cid)
+                    self.store.set_cache(f"epss:{cid}", {"epss": fresh.get(cid)})
+        return scores
 
     def match(self, software: list[dict]) -> dict:
         """{'live': True/False/None, 'items': [software + its cves + fix_version]}"""
@@ -177,4 +231,12 @@ class Matcher:
                 live_ok = False  # live lookups switched off: built-in list only
             cves = sorted(merged.values(), key=lambda c: (not c["kev"], -(c["cvss"] or 0), c["id"]))
             items.append({**sw, "cves": cves, "fix_version": fix_version(sw["version"], cves)})
+        # Enrich every matched CVE with its EPSS exploit-probability (one batched call).
+        if self.live:
+            all_ids = [c["id"] for it in items for c in it["cves"]]
+            if all_ids:
+                scores = self._epss(all_ids)
+                for it in items:
+                    for c in it["cves"]:
+                        c["epss"] = scores.get(c["id"])
         return {"live": live_ok, "items": items}

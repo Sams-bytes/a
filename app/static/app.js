@@ -265,6 +265,7 @@ function renderCves(cves) {
   const row = (c) => `<li>
       <a href="${esc(c.url)}" target="_blank" rel="noopener">${esc(c.id)}</a>
       <span class="sev ${c.cvss >= 9 ? "critical" : c.cvss >= 7 ? "high" : c.cvss >= 4 ? "medium" : "low"}">CVSS ${c.cvss ?? "?"}</span>
+      ${c.epss != null ? `<span class="epss" title="EPSS: estimated chance of exploitation in the next 30 days">${Math.round(c.epss * 100)}% likely</span>` : ""}
       ${c.kev ? `<span class="kev" title="On CISA's Known Exploited Vulnerabilities list">actively exploited</span>` : ""}
       <div class="hint">${esc(c.summary)}</div></li>`;
   const first = cves.slice(0, 5), rest = cves.slice(5);
