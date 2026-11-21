@@ -606,6 +606,59 @@ $("#traffic-btn").onclick = openTraffic;
 $("#audit-btn").onclick = openAudit;
 $("#projects-btn").onclick = openProjects;
 $("#findings-btn").onclick = openFindings;
+$("#compliance-btn").onclick = openCompliance;
+
+// ---------- NIS2 / GDPR readiness ----------
+const CSTAT = { met: "Met", partial: "Partial", gap: "Gap", unknown: "Not assessed" };
+
+async function openCompliance() {
+  current = null;
+  loadDomains();
+  const detail = $("#detail");
+  detail.innerHTML = `<div class="card"><h1>✅ NIS2 / GDPR readiness</h1>
+    <p class="hint">The ten NIS2 Article 21(2) security measures. Aegis fills in what it can see from your scans;
+    you answer the organisational parts. The result is a readiness report you can hand an auditor or insurer.
+    <b>This is a readiness aid, not a certification or legal conclusion.</b></p>
+    <div id="comp-body">Loading…</div></div>`;
+  await renderCompliance();
+}
+
+async function renderCompliance() {
+  const box = $("#comp-body");
+  if (!box) return;
+  let data;
+  try { data = await api("GET", "/api/compliance"); } catch (e) { box.textContent = e.message; return; }
+  const measure = (m) => `<div class="card measure">
+    <div class="m-head">
+      <span class="cstat ${m.status}">${CSTAT[m.status] || m.status}</span>
+      <b>${esc(m.article)} ${esc(m.title)}</b>
+    </div>
+    ${m.scanned ? `<div class="hint">What Aegis sees: ${m.findings.length
+      ? m.findings.map((f) => `<span class="mini-f">${esc(f.title)} <i>(${esc(f.severity)}, ${esc(f.domain || "")})</i></span>`).join(" ")
+      : "no issues found in what can be scanned."}</div>` : ""}
+    ${m.capability_in_use ? `<div class="hint">✓ You are using Aegis's ${esc(m.capability)} capability here.</div>` : ""}
+    <div class="questions">${m.questions.map((q) => `<div class="q">
+      <span>${esc(q.text)}</span>
+      <select class="c-ans" data-m="${m.id}" data-q="${q.id}">
+        ${["unknown", "yes", "no", "na"].map((v) => `<option value="${v}" ${q.answer === v ? "selected" : ""}>${{ unknown: "—", yes: "Yes", no: "No", na: "N/A" }[v]}</option>`).join("")}
+      </select></div>`).join("")}</div>
+  </div>`;
+  box.innerHTML = `<div class="comp-score">
+      <span class="big" style="color:${data.score >= 80 ? "var(--good)" : data.score >= 50 ? "var(--med)" : "var(--high)"}">${data.score}%</span>
+      <span>of the 10 NIS2 measures assessed as met (${data.met}/${data.total})
+        &nbsp;<button class="ghost small" id="comp-report">📄 Download readiness report</button></span>
+    </div>
+    ${data.measures.map(measure).join("")}
+    <p class="hint" style="margin-top:10px">${esc(data.gdpr_note)}</p>`;
+  $("#comp-report").onclick = () => window.open("/report/compliance", "_blank");
+  box.querySelectorAll(".c-ans").forEach((s) => s.onchange = async (e) => {
+    try {
+      await api("POST", "/api/compliance/answer",
+        { measure_id: e.target.dataset.m, question_id: e.target.dataset.q, answer: e.target.value });
+      renderCompliance();
+    } catch (err) { alert(err.message); }
+  });
+}
 $("#haei-btn").onclick = openHaei;
 $("#cases-btn").onclick = openCases;
 $("#ai-btn").onclick = openAi;

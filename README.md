@@ -153,6 +153,23 @@ When [Nmap](https://nmap.org/download.html) is installed, Aegis uses it automati
 - The first Nmap scan after the built-in engine is treated as a new baseline
   (no "20 new ports!" alert).
 
+## NIS2 / GDPR readiness (the compliance deliverable)
+
+Open **✅ Compliance (NIS2)** for a readiness view over the ten **NIS2 Article
+21(2)** security measures. For each measure Aegis fills in **what it can see from
+your scans** (findings already carry their article, e.g. a weak-TLS finding maps
+to 21(2)(h) cryptography) and you answer a short **self-assessment** for the
+organisational parts no scanner can check (backups, training, MFA, incident plan).
+
+You get a **readiness score** and a **📄 downloadable readiness report** mapping
+evidence to each article — the document an EU SME hands an auditor or insurer. It
+also notes the overlap with **GDPR Article 32**.
+
+Honest by design: this is a **readiness aid, not a certification or legal
+compliance conclusion**. "No issues found" means Aegis saw no problem in what it
+can scan from the outside, not that a measure is fully met; organisational
+measures are self-declared.
+
 ## AI security analyst (opt-in, guarded)
 
 Open **🤖 AI analyst** for a plain-English **executive summary** of your posture
@@ -256,6 +273,7 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 | `app/haei.py`, `app/data/incidents.json` | Historical Attack Intelligence: compares findings to how real breaches began |
 | `app/main.py` (cases) | Incident-response cases: timeline, notes, approval-gated response actions |
 | `app/ai.py` | AI analyst (provider-agnostic, opt-in): posture summary + Q&A, with guardrails |
+| `app/compliance.py` | NIS2 Article 21(2) + GDPR readiness: scan evidence + self-assessment + report |
 | `app/verification.py` | Proves domain ownership via a DNS TXT token |
 | `app/scanner.py` | Resolves DNS, scans ports (Nmap or built-in), checks TLS and web headers |
 | `app/traffic.py` | Live view of this computer's connections to the internet, by app and owner |
@@ -273,7 +291,7 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 | `app/db.py` | Saves domains, scan history and alerts in SQLite (`aegis.db`), with small migrations |
 | `app/static/` | The dashboard (HTML/CSS/JS) |
 | `tools/fake_service.py` | Opens a fake service on a local port (optionally with a banner), for demos |
-| `tests/` | 172 tests, including a real scan of a fake FTP server on localhost |
+| `tests/` | 178 tests, including a real scan of a fake FTP server on localhost |
 
 ## Roadmap
 
@@ -289,5 +307,5 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 - [x] Detection & response: incident cases, timeline, approval-gated response actions
 - [x] AI security analyst (opt-in Claude, offline fallback, tenant-isolated, audited)
 - [x] Customer accounts / login + organisations (tenant isolation, audit log)
-- [ ] NIS2 / GDPR readiness mapping
+- [x] NIS2 / GDPR readiness mapping (per-article status, self-assessment, exportable report)
 - [ ] Phishing-awareness training module

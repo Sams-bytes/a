@@ -131,6 +131,13 @@ CREATE TABLE IF NOT EXISTS case_actions (    -- a response action that needs app
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS compliance_answers (  -- NIS2/GDPR self-assessment answers, per org
+    org_id      INTEGER NOT NULL,
+    key         TEXT NOT NULL,          -- "<measure>:<question>", e.g. "c:backups"
+    answer      TEXT NOT NULL,          -- yes | no | na
+    updated_at  TEXT NOT NULL,
+    PRIMARY KEY (org_id, key)
+);
 CREATE TABLE IF NOT EXISTS finding_status (  -- remediation workflow: the state of one finding
     org_id      INTEGER NOT NULL,
     domain      TEXT NOT NULL,
@@ -652,6 +659,20 @@ class Store:
             self._conn.commit()
             return dict(self._conn.execute("SELECT * FROM case_actions WHERE id=?", (action_id,)).fetchone())
 
+    # ---- compliance self-assessment ------------------------------------
+    def set_compliance_answer(self, key: str, answer: str, org_id: int = DEFAULT_ORG) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO compliance_answers(org_id, key, answer, updated_at) VALUES (?,?,?,?)",
+                (org_id, key, answer, now()))
+            self._conn.commit()
+
+    def compliance_answers(self, org_id: int = DEFAULT_ORG) -> dict:
+        with self._lock:
+            rows = self._conn.execute("SELECT key, answer FROM compliance_answers WHERE org_id=?",
+                                      (org_id,)).fetchall()
+        return {r["key"]: r["answer"] for r in rows}
+
     # ---- remediation status --------------------------------------------
     def set_finding_status(self, domain: str, finding_key: str, status: str,
                            note: str | None = None, org_id: int = DEFAULT_ORG) -> None:
@@ -723,6 +744,7 @@ class OrgStore:
         "set_finding_status", "finding_statuses",
         "create_case", "list_cases", "get_case", "add_case_event", "set_case_status",
         "add_action", "decide_action",
+        "set_compliance_answer", "compliance_answers",
     }
 
     def __init__(self, store: Store, org_id: int):

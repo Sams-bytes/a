@@ -270,3 +270,18 @@ table.ports td.b { font-family: var(--mono); font-size: .8rem; color: var(--mute
 .ai-mode { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; margin-bottom: 4px; }
 .ai-mode.ai { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
 .ai-mode.offline { background: color-mix(in srgb, var(--info) 22%, transparent); color: var(--info); }
+
+/* ---- NIS2 / GDPR compliance ---- */
+.comp-score { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.comp-score .big { font-size: 34px; font-weight: 800; }
+.measure { padding: 12px 16px; }
+.m-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.cstat { display: inline-block; min-width: 70px; text-align: center; padding: 2px 9px; border-radius: 10px;
+  font-size: 11px; font-weight: 700; color: #fff; }
+.cstat.met { background: var(--good); } .cstat.partial { background: var(--med); }
+.cstat.gap { background: var(--crit); } .cstat.unknown { background: var(--info); }
+.mini-f { display: inline-block; margin: 0 6px 4px 0; padding: 1px 7px; border-radius: 8px;
+  background: color-mix(in srgb, var(--high) 15%, transparent); font-size: 12px; }
+.questions .q { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 5px 0; border-top: 1px solid var(--line); }
+.c-ans { padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }

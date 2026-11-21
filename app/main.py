@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import ai, haei, jobs, monitor, netmap, report, risk, traffic
+from app import ai, compliance, haei, jobs, monitor, netmap, report, risk, traffic
 from app.accounts import SESSION_COOKIE, Accounts, AuthError
 from app.db import OrgStore, Store
 from app.verification import (InvalidDomain, NotVerified, VerificationService, lookup_txt,
@@ -143,6 +143,12 @@ class DecisionIn(BaseModel):
 
 class AskIn(BaseModel):
     question: str
+
+
+class ComplianceAnswerIn(BaseModel):
+    measure_id: str
+    question_id: str
+    answer: str                     # yes | no | na
 
 
 CASE_STATUSES = ("open", "investigating", "contained", "closed")
@@ -372,6 +378,53 @@ def decide_action(action_id: int, body: DecisionIn, ctx: Ctx = Depends(get_ctx))
         raise HTTPException(status_code=code, detail=str(e))
     ctx.audit("action_decision", action["action"], body.status)
     return ctx.store.get_case(action["case_id"])
+
+
+# ---- NIS2 / GDPR readiness ------------------------------------------------
+def _org_open_findings(ctx: Ctx) -> list[dict]:
+    """This org's current open, non-info findings (for compliance mapping)."""
+    out = []
+    for d in ctx.store.list_domains():
+        scan = ctx.store.latest_scan(d["domain"])
+        if not scan:
+            continue
+        statuses = ctx.store.finding_statuses(d["domain"])
+        for f in scan["result"].get("findings", []):
+            if f.get("severity") == "info":
+                continue
+            if statuses.get(f["key"], {}).get("status") in ("fixed", "accepted", "false_positive"):
+                continue
+            out.append({"title": f["title"], "severity": f["severity"],
+                        "nis2": f.get("nis2"), "domain": d["domain"]})
+    return out
+
+
+def _assess(ctx: Ctx) -> dict:
+    caps = {"incidents": bool(ctx.store.list_cases()),
+            "monitoring": any(d.get("monitor") for d in ctx.store.list_domains())}
+    return compliance.assess(_org_open_findings(ctx), ctx.store.compliance_answers(), caps)
+
+
+@app.get("/api/compliance")
+def compliance_status(ctx: Ctx = Depends(get_ctx)):
+    return _assess(ctx)
+
+
+@app.post("/api/compliance/answer")
+def compliance_answer(body: ComplianceAnswerIn, ctx: Ctx = Depends(get_ctx)):
+    if body.answer not in ("yes", "no", "na"):
+        raise HTTPException(status_code=422, detail="answer must be yes, no or na")
+    if not any(m["id"] == body.measure_id for m in compliance.MEASURES):
+        raise HTTPException(status_code=404, detail="Unknown measure.")
+    ctx.store.set_compliance_answer(f"{body.measure_id}:{body.question_id}", body.answer)
+    ctx.audit("compliance_answer", f"{body.measure_id}:{body.question_id}", body.answer)
+    return _assess(ctx)
+
+
+@app.get("/report/compliance", response_class=HTMLResponse, include_in_schema=False)
+def compliance_report(ctx: Ctx = Depends(get_ctx)):
+    ctx.audit("compliance_report")
+    return report.render_compliance(ctx.org_name, _assess(ctx))
 
 
 # ---- AI security analyst (opt-in, guarded) --------------------------------
