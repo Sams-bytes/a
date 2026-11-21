@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import haei, jobs, monitor, netmap, report, risk, traffic
+from app import ai, haei, jobs, monitor, netmap, report, risk, traffic
 from app.accounts import SESSION_COOKIE, Accounts, AuthError
 from app.db import OrgStore, Store
 from app.verification import (InvalidDomain, NotVerified, VerificationService, lookup_txt,
@@ -141,8 +141,14 @@ class DecisionIn(BaseModel):
     note: str | None = None
 
 
+class AskIn(BaseModel):
+    question: str
+
+
 CASE_STATUSES = ("open", "investigating", "contained", "closed")
 SEVERITIES = ("low", "medium", "high", "critical")
+
+analyst = ai.Analyst()
 
 
 def scan_mode(row: dict) -> str:
@@ -366,6 +372,35 @@ def decide_action(action_id: int, body: DecisionIn, ctx: Ctx = Depends(get_ctx))
         raise HTTPException(status_code=code, detail=str(e))
     ctx.audit("action_decision", action["action"], body.status)
     return ctx.store.get_case(action["case_id"])
+
+
+# ---- AI security analyst (opt-in, guarded) --------------------------------
+@app.get("/api/ai/status")
+def ai_status(ctx: Ctx = Depends(get_ctx)):
+    return analyst.status()
+
+
+@app.post("/api/ai/summary")
+def ai_summary(ctx: Ctx = Depends(get_ctx)):
+    result = _ai_call(ctx, analyst.summary, ai.build_context(ctx.store))
+    ctx.audit("ai_summary", None, result["mode"])
+    return result
+
+
+@app.post("/api/ai/ask")
+def ai_ask(body: AskIn, ctx: Ctx = Depends(get_ctx)):
+    if not (body.question or "").strip():
+        raise HTTPException(status_code=422, detail="Ask a question.")
+    result = _ai_call(ctx, lambda c: analyst.ask(body.question.strip(), c), ai.build_context(ctx.store))
+    ctx.audit("ai_ask", body.question.strip()[:80], result["mode"])
+    return result
+
+
+def _ai_call(ctx: Ctx, fn, context):
+    try:
+        return fn(context)
+    except Exception as e:   # provider down / bad key: fail gracefully, never 500 the UI
+        raise HTTPException(status_code=502, detail=f"The AI analyst could not be reached: {e}")
 
 
 # ---- Historical Attack Intelligence (HAEI) --------------------------------

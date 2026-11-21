@@ -153,6 +153,23 @@ When [Nmap](https://nmap.org/download.html) is installed, Aegis uses it automati
 - The first Nmap scan after the built-in engine is treated as a new baseline
   (no "20 new ports!" alert).
 
+## AI security analyst (opt-in, guarded)
+
+Open **🤖 AI analyst** for a plain-English **executive summary** of your posture
+and natural-language **Q&A** over your own findings ("what's my biggest risk?").
+
+Guardrails come first (spec section 5):
+
+- **Opt-in & private.** It calls an external model (the latest Claude) only when
+  you set `ANTHROPIC_API_KEY`. With no key it gives a deterministic **rule-based
+  summary**, clearly labelled. Only findings are ever sent — never your account.
+- **Tenant-isolated.** It is only handed the logged-in organisation's data.
+- **Prompt-injection defense.** Scan banners are untrusted, so the system prompt
+  instructs the model to treat all provided data as *data, not instructions*.
+- **No autonomous action.** It returns text only; any action it suggests still
+  goes through the approved incident workflow. Every AI query is audit-logged.
+- Settings: `ANTHROPIC_API_KEY` (enables it), `AEGIS_AI_MODEL` (override the model).
+
 ## Incident response (cases with approval-gated actions)
 
 Open **🚨 Incidents** to turn a finding or alert into a tracked **case**: a title,
@@ -238,6 +255,7 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 | `app/report.py` | Printable per-domain client report (HTML → browser Print to PDF) |
 | `app/haei.py`, `app/data/incidents.json` | Historical Attack Intelligence: compares findings to how real breaches began |
 | `app/main.py` (cases) | Incident-response cases: timeline, notes, approval-gated response actions |
+| `app/ai.py` | AI analyst (provider-agnostic, opt-in): posture summary + Q&A, with guardrails |
 | `app/verification.py` | Proves domain ownership via a DNS TXT token |
 | `app/scanner.py` | Resolves DNS, scans ports (Nmap or built-in), checks TLS and web headers |
 | `app/traffic.py` | Live view of this computer's connections to the internet, by app and owner |
@@ -255,7 +273,7 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 | `app/db.py` | Saves domains, scan history and alerts in SQLite (`aegis.db`), with small migrations |
 | `app/static/` | The dashboard (HTML/CSS/JS) |
 | `tools/fake_service.py` | Opens a fake service on a local port (optionally with a banner), for demos |
-| `tests/` | 166 tests, including a real scan of a fake FTP server on localhost |
+| `tests/` | 172 tests, including a real scan of a fake FTP server on localhost |
 
 ## Roadmap
 
@@ -269,6 +287,7 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 - [x] Exposure management: EPSS, risk-ranked worklist, remediation status, PDF-able reports
 - [x] Historical Attack Intelligence (HAEI): findings vs documented real breaches + MITRE ATT&CK
 - [x] Detection & response: incident cases, timeline, approval-gated response actions
+- [x] AI security analyst (opt-in Claude, offline fallback, tenant-isolated, audited)
 - [x] Customer accounts / login + organisations (tenant isolation, audit log)
 - [ ] NIS2 / GDPR readiness mapping
 - [ ] Phishing-awareness training module

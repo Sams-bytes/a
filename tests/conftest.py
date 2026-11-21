@@ -30,6 +30,11 @@ def predictable_engines(monkeypatch):
     installed or the laptop is online. Tests that need Nmap/NVD behaviour fake it."""
     monkeypatch.setenv("AEGIS_ENGINE", "builtin")
     monkeypatch.setenv("AEGIS_CVE_LIVE", "0")
+    # Never let tests reach the external AI, even if the dev has a key in their env.
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    import app.main as _main
+    from app import ai as _ai
+    monkeypatch.setattr(_main, "analyst", _ai.Analyst(api_key=""), raising=False)
     # No live hosting (RDAP) lookups or subdomain discovery: tests fake them where needed.
     from app import monitor
     monkeypatch.setattr(monitor, "lookup_provider", lambda domain, store=None: None)

@@ -608,6 +608,49 @@ $("#projects-btn").onclick = openProjects;
 $("#findings-btn").onclick = openFindings;
 $("#haei-btn").onclick = openHaei;
 $("#cases-btn").onclick = openCases;
+$("#ai-btn").onclick = openAi;
+
+// ---------- AI analyst ----------
+async function openAi() {
+  current = null;
+  loadDomains();
+  const detail = $("#detail");
+  let st;
+  try { st = await api("GET", "/api/ai/status"); } catch (e) { detail.innerHTML = `<div class="card">${esc(e.message)}</div>`; return; }
+  const banner = st.enabled
+    ? `<div class="ai-on">🤖 AI analyst is <b>on</b> (${esc(st.provider)} · ${esc(st.model)}). When you ask, your
+        findings (not your account details) are sent to ${esc(st.provider)} to generate the answer.</div>`
+    : `<div class="ai-off">AI analyst is <b>off</b> — no API key set, so you'll get a fast rule-based summary.
+        To enable richer summaries and Q&A, set <code>ANTHROPIC_API_KEY</code> and restart Aegis.</div>`;
+  detail.innerHTML = `<div class="card"><h1>🤖 AI security analyst</h1>
+    ${banner}
+    <p class="hint">It reads only <b>your own</b> findings. It can explain and prioritise, but it cannot change
+    anything — any action it suggests still goes through the approved incident workflow, and every query is
+    logged in the audit trail. AI can be wrong; treat it as a helpful draft, not the final word.</p>
+    <div class="row">
+      <button id="ai-sum">Generate posture summary</button>
+    </div>
+    <form id="ai-ask-form" class="add" style="margin-top:10px">
+      <input id="ai-q" placeholder="Ask about your security, e.g. what's my biggest risk right now?" required>
+      <button>Ask</button>
+    </form>
+    <div id="ai-out"></div></div>`;
+  $("#ai-sum").onclick = () => aiRun("/api/ai/summary", null, $("#ai-sum"));
+  $("#ai-ask-form").onsubmit = (e) => { e.preventDefault(); aiRun("/api/ai/ask", { question: $("#ai-q").value }, null); };
+}
+
+async function aiRun(path, body, btn) {
+  const out = $("#ai-out");
+  out.innerHTML = `<div class="hint">Thinking…</div>`;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await api("POST", path, body);
+    out.innerHTML = `<div class="card ai-answer">
+      <div class="ai-mode ${r.mode}">${r.mode === "ai" ? "AI-generated" : "rule-based (AI off)"}</div>
+      <pre>${esc(r.text)}</pre></div>`;
+  } catch (e) { out.innerHTML = `<div class="card">${esc(e.message)}</div>`; }
+  if (btn) btn.disabled = false;
+}
 
 // ---------- incident response (cases) ----------
 let myRole = null;

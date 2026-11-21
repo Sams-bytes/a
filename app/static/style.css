@@ -261,3 +261,12 @@ table.ports td.b { font-family: var(--mono); font-size: .8rem; color: var(--mute
 .act-status.done { background: color-mix(in srgb, var(--good) 22%, transparent); color: var(--good); }
 .actions-list li, .timeline li { margin-bottom: 8px; }
 .timeline { border-left: 2px solid var(--line); padding-left: 14px; }
+
+/* ---- AI analyst ---- */
+.ai-on, .ai-off { padding: 10px 12px; border-radius: 8px; margin-bottom: 10px; font-size: 13px; }
+.ai-on { background: color-mix(in srgb, var(--good) 15%, transparent); }
+.ai-off { background: color-mix(in srgb, var(--med) 15%, transparent); }
+.ai-answer pre { white-space: pre-wrap; font: inherit; margin: 6px 0 0; }
+.ai-mode { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; margin-bottom: 4px; }
+.ai-mode.ai { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent); }
+.ai-mode.offline { background: color-mix(in srgb, var(--info) 22%, transparent); color: var(--info); }
