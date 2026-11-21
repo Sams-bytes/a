@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import jobs, monitor, netmap, report, risk, traffic
+from app import haei, jobs, monitor, netmap, report, risk, traffic
 from app.accounts import SESSION_COOKIE, Accounts, AuthError
 from app.db import OrgStore, Store
 from app.verification import (InvalidDomain, NotVerified, VerificationService, lookup_txt,
@@ -263,6 +263,33 @@ def all_findings(ctx: Ctx = Depends(get_ctx)):
             counts[st["status"]] = counts.get(st["status"], 0) + 1
     rows.sort(key=lambda r: (r["status"] != "open", -r["risk"]))
     return {"findings": rows, "counts": counts}
+
+
+# ---- Historical Attack Intelligence (HAEI) --------------------------------
+@app.get("/api/incidents")
+def incident_library(ctx: Ctx = Depends(get_ctx)):
+    """The library of documented historical breaches (reference data)."""
+    return haei.load_incidents()
+
+
+@app.get("/api/haei")
+def attack_intelligence(ctx: Ctx = Depends(get_ctx)):
+    """Compare this org's current findings to how real breaches began."""
+    pairs = []
+    for d in ctx.store.list_domains():
+        scan = ctx.store.latest_scan(d["domain"])
+        if not scan:
+            continue
+        statuses = ctx.store.finding_statuses(d["domain"])
+        for f in scan["result"].get("findings", []):
+            # Skip findings the team has already dealt with.
+            if statuses.get(f["key"], {}).get("status") in ("fixed", "false_positive"):
+                continue
+            pairs.append((d["domain"], f))
+    signals = haei.collect_signals(pairs)
+    return {"signals": [{"id": s, "label": haei.SIGNAL_LABELS.get(s, s), "evidence": ev}
+                        for s, ev in signals.items()],
+            "matches": haei.match(signals)}
 
 
 @app.get("/report/{domain}", response_class=HTMLResponse, include_in_schema=False)

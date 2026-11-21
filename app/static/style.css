@@ -236,3 +236,14 @@ table.ports td.b { font-family: var(--mono); font-size: .8rem; color: var(--mute
 .done-row { opacity: .5; }
 .fstatus { padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px;
   background: var(--bg); color: var(--ink); font: inherit; }
+
+/* ---- attack intelligence (HAEI) ---- */
+.inc-match { border-left: 4px solid var(--high); }
+.inc-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.inc-match .shared { margin-bottom: 8px; }
+.sig { display: inline-block; margin: 0 6px 6px 0; padding: 2px 9px; border-radius: 10px;
+  background: color-mix(in srgb, var(--high) 18%, transparent); color: var(--high); font-size: 12px; font-weight: 600; }
+.conf { margin-left: auto; padding: 1px 8px; border-radius: 10px; font-size: 11px; text-transform: uppercase; }
+.conf.confirmed { background: color-mix(in srgb, var(--good) 20%, transparent); color: var(--good); }
+.conf.reported { background: color-mix(in srgb, var(--info) 22%, transparent); color: var(--info); }
+.inc-match .evi { color: var(--muted); }

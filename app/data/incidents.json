@@ -1,0 +1,166 @@
+{
+  "_comment": "Documented, publicly reported cyber incidents. Factual summaries only; each carries a source URL and a confidence level. 'signals' are the externally-observable entry conditions Aegis can compare against (empty = library-only, e.g. supply-chain or phishing we cannot see from an external scan). Techniques are MITRE ATT&CK ids.",
+  "incidents": [
+    {
+      "id": "wannacry-2017", "name": "WannaCry", "org": "Worldwide (incl. NHS England)",
+      "sector": "Multiple", "country": "Global", "date": "2017-05", "category": "Ransomware worm",
+      "initial_access": "Spread automatically by exploiting the SMBv1 'EternalBlue' flaw (MS17-010) on unpatched Windows systems reachable over the network.",
+      "techniques": ["T1210"], "signals": ["smb_v1"],
+      "impact": "Over 200,000 computers across 150 countries; the NHS cancelled around 19,000 appointments.",
+      "controls": ["Disable SMBv1 everywhere", "Apply MS17-010 and keep Windows patched", "Never expose TCP 445 to the internet"],
+      "source": "https://www.cisa.gov/news-events/alerts/2017/05/12/indicators-associated-wannacry-ransomware",
+      "confidence": "confirmed"
+    },
+    {
+      "id": "notpetya-2017", "name": "NotPetya", "org": "Maersk, Merck, others",
+      "sector": "Logistics, pharma, multiple", "country": "Global (origin Ukraine)", "date": "2017-06",
+      "category": "Destructive wiper",
+      "initial_access": "A trojanised update of Ukrainian accounting software (M.E.Doc) planted the malware, which then spread using EternalBlue (SMBv1) and stolen credentials.",
+      "techniques": ["T1195", "T1210"], "signals": ["smb_v1"],
+      "impact": "Estimated 10+ billion USD in global damage; Maersk rebuilt ~4,000 servers and 45,000 PCs.",
+      "controls": ["Disable SMBv1", "Segment networks to limit lateral movement", "Patch MS17-010", "Harden software supply chain"],
+      "source": "https://www.cisa.gov/news-events/alerts/2017/07/01/petya-ransomware",
+      "confidence": "confirmed"
+    },
+    {
+      "id": "equifax-2017", "name": "Equifax breach", "org": "Equifax",
+      "sector": "Finance / credit", "country": "USA", "date": "2017-05", "category": "Data breach",
+      "initial_access": "Exploited an unpatched Apache Struts flaw (CVE-2017-5638) on a public-facing web application; a patch had been available for two months.",
+      "techniques": ["T1190"], "signals": ["exploit_public_app", "known_exploited_cve"],
+      "impact": "Personal data of ~147 million people exposed; ~700 million USD settlement.",
+      "controls": ["Patch internet-facing software promptly", "Inventory public apps and their components", "Monitor for known-exploited CVEs"],
+      "source": "https://www.gao.gov/products/gao-18-559",
+      "confidence": "confirmed"
+    },
+    {
+      "id": "exchange-proxylogon-2021", "name": "Microsoft Exchange (ProxyLogon)", "org": "Tens of thousands of organisations",
+      "sector": "Multiple", "country": "Global", "date": "2021-03", "category": "Mass exploitation",
+      "initial_access": "A chain starting with CVE-2021-26855 (SSRF) let attackers authenticate to internet-facing on-premises Exchange servers and run code.",
+      "techniques": ["T1190"], "signals": ["exploit_public_app", "known_exploited_cve"],
+      "impact": "At least 30,000 US organisations and many more worldwide compromised before patching.",
+      "controls": ["Patch internet-facing Exchange immediately", "Avoid exposing Exchange directly; front with a gateway/VPN", "Hunt for web shells after exposure"],
+      "source": "https://www.cisa.gov/news-events/alerts/2021/03/06/microsoft-exchange-server-vulnerabilities",
+      "confidence": "confirmed"
+    },
+    {
+      "id": "log4shell-2021", "name": "Log4Shell exploitation", "org": "Countless (Log4j is everywhere)",
+      "sector": "Multiple", "country": "Global", "date": "2021-12", "category": "Mass exploitation",
+      "initial_access": "CVE-2021-44228 in the Log4j logging library allowed remote code execution by sending a crafted string to any public-facing app that logged it.",
+      "techniques": ["T1190"], "signals": ["exploit_public_app", "known_exploited_cve"],
+      "impact": "One of the most widespread vulnerabilities ever; exploited within days across the internet.",
+      "controls": ["Patch/upgrade Log4j", "Keep a software bill of materials to find affected apps fast", "Watch known-exploited-CVE feeds (CISA KEV)"],
+      "source": "https://www.cisa.gov/news-events/news/apache-log4j-vulnerability-guidance",
+      "confidence": "confirmed"
+    },
+    {
+      "id": "moveit-2023", "name": "MOVEit Transfer mass hack", "org": "600+ organisations (Cl0p)",
+      "sector": "Multiple", "country": "Global", "date": "2023-05", "category": "Mass exploitation / extortion",
+      "initial_access": "A SQL-injection zero-day (CVE-2023-34362) in the internet-facing MOVEit Transfer file-transfer app allowed data theft.",
+      "techniques": ["T1190"], "signals": ["exploit_public_app"],
+      "impact": "Data from 2,000+ organisations and 60+ million individuals stolen.",
+      "controls": ["Patch managed file-transfer apps fast", "Limit who can reach such apps from the internet", "Have an incident plan for third-party-software zero-days"],
+      "source": "https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-158a",
+      "confidence": "confirmed"
+    },
+    {
+      "id": "colonial-pipeline-2021", "name": "Colonial Pipeline", "org": "Colonial Pipeline",
+      "sector": "Critical infrastructure (energy)", "country": "USA", "date": "2021-05", "category": "Ransomware",
+      "initial_access": "Attackers logged into a legacy VPN account using a leaked password; the account had no multi-factor authentication.",
+      "techniques": ["T1133", "T1078"], "signals": ["exposed_remote_access"],
+      "impact": "Largest US fuel pipeline shut down for days; ~4.4 million USD ransom paid (partly recovered).",
+      "controls": ["Require MFA on every remote-access/VPN account", "Disable unused accounts", "Monitor remote logins for unusual locations"],
+      "source": "https://www.cisa.gov/news-events/news/colonial-pipeline-cyber-incident",
+      "confidence": "confirmed"
+    },
+    {
+      "id": "change-healthcare-2024", "name": "Change Healthcare", "org": "Change Healthcare (UnitedHealth)",
+      "sector": "Healthcare", "country": "USA", "date": "2024-02", "category": "Ransomware",
+      "initial_access": "Attackers used stolen credentials on a Citrix remote-access portal that was not protected by multi-factor authentication.",
+      "techniques": ["T1133", "T1078"], "signals": ["exposed_remote_access"],
+      "impact": "Massive disruption to US healthcare claims and pharmacy processing; data on an estimated 100 million people affected.",
+      "controls": ["Enforce MFA on every remote-access gateway", "Review third-party and contractor access", "Segment critical systems"],
+      "source": "https://www.hhs.gov/about/news/2024/03/13/hhs-statement-regarding-cyberattack-change-healthcare.html",
+      "confidence": "reported"
+    },
+    {
+      "id": "hof-van-twente-2020", "name": "Hof van Twente municipality", "org": "Gemeente Hof van Twente",
+      "sector": "Local government", "country": "Netherlands", "date": "2020-12", "category": "Ransomware",
+      "initial_access": "Attackers reached an exposed remote-desktop (RDP) server and guessed a weak admin password ('Welkom2020'); there was no multi-factor authentication.",
+      "techniques": ["T1133", "T1110", "T1078"], "signals": ["exposed_rdp", "exposed_remote_access"],
+      "impact": "Systems and backups wiped; recovery cost estimated around 4.2 million EUR. A well-documented Dutch case.",
+      "controls": ["Never expose RDP to the internet; put it behind a VPN", "Require MFA and strong passwords for remote access", "Keep offline, tested backups"],
+      "source": "https://www.hofvantwente.nl/",
+      "confidence": "reported"
+    },
+    {
+      "id": "maastricht-university-2019", "name": "Maastricht University", "org": "Universiteit Maastricht",
+      "sector": "Education", "country": "Netherlands", "date": "2019-12", "category": "Ransomware",
+      "initial_access": "A phishing email gave the attackers a foothold; they moved laterally over weeks and deployed Clop ransomware, partly via an unpatched server.",
+      "techniques": ["T1566", "T1486"], "signals": [],
+      "impact": "Most systems encrypted just before the holidays; the university paid ~197,000 EUR ransom.",
+      "controls": ["Phishing-awareness training and email filtering", "Patch internal servers, not just internet-facing ones", "Detect lateral movement early"],
+      "source": "https://www.maastrichtuniversity.nl/news/ransomware-attack-um",
+      "confidence": "reported"
+    },
+    {
+      "id": "solarwinds-2020", "name": "SolarWinds (SUNBURST)", "org": "SolarWinds customers (incl. US agencies)",
+      "sector": "Government, tech", "country": "Global", "date": "2020-12", "category": "Supply-chain compromise",
+      "initial_access": "Attackers inserted a backdoor into SolarWinds Orion software updates, which thousands of customers then installed themselves.",
+      "techniques": ["T1195"], "signals": [],
+      "impact": "~18,000 organisations received the trojanised update; a smaller number were further targeted.",
+      "controls": ["Vet software suppliers and update integrity", "Monitor outbound traffic from management tools", "Least-privilege for monitoring software"],
+      "source": "https://www.cisa.gov/news-events/alerts/2020/12/13/active-exploitation-solarwinds-software",
+      "confidence": "confirmed"
+    },
+    {
+      "id": "mgm-2023", "name": "MGM Resorts", "org": "MGM Resorts",
+      "sector": "Hospitality / gaming", "country": "USA", "date": "2023-09", "category": "Ransomware / social engineering",
+      "initial_access": "Attackers (Scattered Spider) phoned the IT help desk, impersonated an employee and got identity/MFA reset, then accessed Okta and Azure.",
+      "techniques": ["T1566", "T1078"], "signals": [],
+      "impact": "Days of disruption to hotels and casinos; estimated ~100 million USD impact.",
+      "controls": ["Strong help-desk identity verification before resets", "Phishing-resistant MFA (FIDO2)", "Limit what a single identity can reach"],
+      "source": "https://www.cisa.gov/news-events/cybersecurity-advisories/aa23-320a",
+      "confidence": "reported"
+    },
+    {
+      "id": "snowflake-2024", "name": "Snowflake customer account compromises", "org": "Multiple Snowflake customers",
+      "sector": "Multiple", "country": "Global", "date": "2024-05", "category": "Credential abuse",
+      "initial_access": "Attackers logged into customer cloud-data accounts using credentials stolen earlier by infostealer malware; the accounts lacked multi-factor authentication.",
+      "techniques": ["T1078"], "signals": [],
+      "impact": "Data stolen from around 165 customer environments and used for extortion.",
+      "controls": ["Enforce MFA on all cloud/SaaS accounts", "Rotate credentials exposed by infostealers", "Restrict access by network allow-lists"],
+      "source": "https://www.cisa.gov/news-events/alerts/2024/06/07/guidance-addressing-snowflake-customer-data-security-incidents",
+      "confidence": "reported"
+    },
+    {
+      "id": "marriott-starwood-2018", "name": "Marriott / Starwood", "org": "Marriott (Starwood systems)",
+      "sector": "Hospitality", "country": "Global", "date": "2018-11", "category": "Data breach",
+      "initial_access": "Attackers had long-term, undetected access to the Starwood guest-reservation database (since around 2014, before Marriott's acquisition).",
+      "techniques": ["T1213"], "signals": ["exposed_database"],
+      "impact": "Data of up to ~339 million guest records exposed; large GDPR fine by the UK ICO.",
+      "controls": ["Protect and monitor databases holding personal data", "Security due-diligence during acquisitions", "Detect long-dwell intrusions"],
+      "source": "https://ico.org.uk/action-weve-taken/enforcement/marriott-international-inc/",
+      "confidence": "reported"
+    },
+    {
+      "id": "capital-one-2019", "name": "Capital One", "org": "Capital One",
+      "sector": "Finance", "country": "USA", "date": "2019-07", "category": "Cloud data breach",
+      "initial_access": "A server-side request forgery against a misconfigured web application firewall let the attacker reach cloud metadata and then read S3 storage.",
+      "techniques": ["T1190"], "signals": ["exploit_public_app"],
+      "impact": "Data of ~100 million US and ~6 million Canadian customers exposed; ~80 million USD regulatory penalty.",
+      "controls": ["Fix WAF/app misconfigurations and test for SSRF", "Lock down cloud metadata access", "Least-privilege cloud roles"],
+      "source": "https://www.occ.gov/news-issuances/news-releases/2020/nr-occ-2020-101.html",
+      "confidence": "reported"
+    },
+    {
+      "id": "kaseya-vsa-2021", "name": "Kaseya VSA", "org": "Kaseya VSA customers / MSPs",
+      "sector": "IT services", "country": "Global", "date": "2021-07", "category": "Supply-chain ransomware",
+      "initial_access": "REvil exploited a zero-day in the internet-facing Kaseya VSA remote-management server to push ransomware to downstream customers.",
+      "techniques": ["T1190", "T1195"], "signals": ["exploit_public_app"],
+      "impact": "Up to ~1,500 downstream businesses hit through managed service providers.",
+      "controls": ["Restrict and patch remote-management servers", "Don't expose RMM consoles to the internet", "Vet MSP/tooling supply chain"],
+      "source": "https://www.cisa.gov/news-events/alerts/2021/07/04/cisa-fbi-guidance-msps-and-their-customers-affected-kaseya-vsa",
+      "confidence": "confirmed"
+    }
+  ]
+}

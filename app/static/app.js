@@ -606,6 +606,49 @@ $("#traffic-btn").onclick = openTraffic;
 $("#audit-btn").onclick = openAudit;
 $("#projects-btn").onclick = openProjects;
 $("#findings-btn").onclick = openFindings;
+$("#haei-btn").onclick = openHaei;
+
+// ---------- Historical Attack Intelligence ----------
+async function openHaei() {
+  current = null;
+  loadDomains();
+  const detail = $("#detail");
+  detail.innerHTML = `<div class="card"><h1>🕵️ Attack intelligence</h1>
+    <p class="hint">How does your exposure compare to <b>how real breaches actually began</b>? Aegis tags each
+    documented incident with the entry condition attackers used, and checks whether you share it.
+    <b>Sharing an entry condition is not proof you're vulnerable</b> — it's a prompt to apply the control
+    that would have stopped that attack.</p>
+    <div id="haei-body">Loading…</div></div>`;
+  const box = $("#haei-body");
+  let data, lib;
+  try { data = await api("GET", "/api/haei"); lib = await api("GET", "/api/incidents"); }
+  catch (e) { box.textContent = e.message; return; }
+
+  const matchCard = (m) => `<div class="card inc-match">
+    <div class="inc-head"><b>${esc(m.name)}</b> <span class="hint">${esc(m.country)} · ${esc(m.date)} · ${esc(m.category)}</span>
+      <span class="conf ${m.confidence}">${esc(m.confidence)}</span></div>
+    <div class="shared">${m.shared_signals.map((s) => `<span class="sig">${esc(s.label)}</span>`).join("")}</div>
+    <p><b>How that attack began:</b> ${esc(m.initial_access)}</p>
+    <p class="evi"><b>What you share:</b> ${m.evidence.map((e) => `${esc(e.finding)} <span class="hint">(${esc(e.domain)})</span>`).join("; ")}</p>
+    <p><b>Controls that would have stopped it:</b></p>
+    <ul>${m.controls.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>
+    <div class="hint">MITRE ATT&CK: ${m.techniques.join(", ") || "—"} · <a href="${esc(m.source)}" target="_blank" rel="noopener">source</a></div>
+  </div>`;
+
+  const matches = data.matches.length
+    ? `<h2>Your exposure resembles ${data.matches.length} documented attack${data.matches.length > 1 ? "s" : ""}</h2>
+       ${data.matches.map(matchCard).join("")}`
+    : `<div class="card"><p>✅ None of your <b>current</b> findings match the entry condition of a known
+        breach in our library. Keep it that way — and remember this only covers what's externally visible.</p></div>`;
+
+  const libRows = lib.map((i) => `<tr>
+    <td><b>${esc(i.name)}</b></td><td>${esc(i.country)}</td><td>${esc(i.date)}</td>
+    <td>${esc(i.category)}</td><td class="hint">${esc(i.initial_access)}</td>
+    <td><a href="${esc(i.source)}" target="_blank" rel="noopener">source</a></td></tr>`).join("");
+
+  box.innerHTML = matches + `<details class="card" style="margin-top:14px"><summary><b>Incident library (${lib.length})</b> — every documented breach we compare against</summary>
+    <table class="ports"><tr><th>Incident</th><th>Country</th><th>Date</th><th>Type</th><th>How it began</th><th></th></tr>${libRows}</table></details>`;
+}
 
 // ---------- findings worklist (exposure management, risk-ranked) ----------
 const STATUS_LABELS = { open: "Open", fixed: "Fixed", accepted: "Accepted (risk)", false_positive: "False positive" };

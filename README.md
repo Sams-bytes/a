@@ -153,6 +153,24 @@ When [Nmap](https://nmap.org/download.html) is installed, Aegis uses it automati
 - The first Nmap scan after the built-in engine is treated as a new baseline
   (no "20 new ports!" alert).
 
+## Attack intelligence (how real breaches began)
+
+Open **🕵️ Attack intelligence** to compare your exposure against a library of
+documented real breaches (WannaCry, Equifax, Log4Shell, MOVEit, Colonial Pipeline,
+Change Healthcare, and Dutch cases like Hof van Twente and Maastricht University).
+
+Each incident is tagged with the **externally-observable entry condition** the
+attackers used (e.g. "legacy SMBv1 enabled", "internet-facing software with a
+known-exploited CVE", "RDP reachable"), mapped to **MITRE ATT&CK**. Aegis derives
+the same signals from your current findings and shows where they overlap —
+"your exposure resembles how *this* attack began" — with the controls that would
+have stopped it and a link to the source.
+
+Honest by design: **sharing an entry condition is not proof you are vulnerable**,
+only a prompt to apply the control. Incidents whose entry we cannot see from an
+external scan (phishing, supply-chain, stolen cloud credentials) stay in the
+library and never produce a false match. Fixed/false-positive findings are excluded.
+
 ## Exposure management (risk worklist + reports)
 
 Beyond listing findings, Aegis prioritises them. Open **⚠️ Findings (risk)** to see
@@ -202,6 +220,7 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 | `app/accounts.py` | Customer accounts: scrypt passwords, signed-cookie sessions, organisations |
 | `app/risk.py` | Risk = impact (CVSS) × likelihood (KEV / EPSS); ranks the findings worklist |
 | `app/report.py` | Printable per-domain client report (HTML → browser Print to PDF) |
+| `app/haei.py`, `app/data/incidents.json` | Historical Attack Intelligence: compares findings to how real breaches began |
 | `app/verification.py` | Proves domain ownership via a DNS TXT token |
 | `app/scanner.py` | Resolves DNS, scans ports (Nmap or built-in), checks TLS and web headers |
 | `app/traffic.py` | Live view of this computer's connections to the internet, by app and owner |
@@ -219,7 +238,7 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 | `app/db.py` | Saves domains, scan history and alerts in SQLite (`aegis.db`), with small migrations |
 | `app/static/` | The dashboard (HTML/CSS/JS) |
 | `tools/fake_service.py` | Opens a fake service on a local port (optionally with a banner), for demos |
-| `tests/` | 155 tests, including a real scan of a fake FTP server on localhost |
+| `tests/` | 161 tests, including a real scan of a fake FTP server on localhost |
 
 ## Roadmap
 
@@ -231,6 +250,7 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 - [ ] Email delivery for alerts
 - [x] CVE matching on software versions (built-in list + live NVD)
 - [x] Exposure management: EPSS, risk-ranked worklist, remediation status, PDF-able reports
+- [x] Historical Attack Intelligence (HAEI): findings vs documented real breaches + MITRE ATT&CK
 - [x] Customer accounts / login + organisations (tenant isolation, audit log)
 - [ ] NIS2 / GDPR readiness mapping
 - [ ] Phishing-awareness training module
