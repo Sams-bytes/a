@@ -260,19 +260,43 @@ function renderChanges(ch) {
     <p>Score ${ch.score_before} → <b>${ch.score_after}</b>${delta ? ` (<span class="${delta < 0 ? "bad" : "good"}">${delta > 0 ? "+" : ""}${delta}</span>)` : ""}</p></div>`;
 }
 
+// ---------- live jobs (watch a scan work) ----------
+function livePanel(j) {
+  return `<div class="card live">
+    <div class="live-bar"><div class="live-fill" style="width:${j.percent || 0}%"></div></div>
+    <div class="live-phase"><b>${esc(j.phase || "Working…")}</b> · ${j.percent || 0}%</div>
+    <div class="live-log">${(j.lines || []).slice(-8).map((l) => `<div>› ${esc(l)}</div>`).join("")}</div>
+  </div>`;
+}
+
+// Start a background scan and show its live progress in `target` until it finishes.
+async function runLive(path, body, target) {
+  const { job_id } = await api("POST", path, body);
+  target.innerHTML = livePanel({ phase: "Starting…", percent: 0 });
+  return await new Promise((resolve, reject) => {
+    const tick = async () => {
+      try {
+        const j = await api("GET", `/api/jobs/${job_id}`);
+        target.innerHTML = livePanel(j);
+        if (j.state === "done") return resolve(j.result);
+        if (j.state === "error") return reject(new Error(j.error || "Scan failed"));
+        setTimeout(tick, 800);
+      } catch (e) { reject(e); }
+    };
+    tick();
+  });
+}
+
 async function runScan(domain, btn) {
   btn.disabled = true;
-  $(".scanning").classList.remove("hidden");
-  $(".results").innerHTML = "";
   try {
-    const scan = await api("POST", `/api/domains/${encodeURIComponent(domain)}/scan`);
+    const scan = await runLive(`/api/domains/${encodeURIComponent(domain)}/scan?live=true`, null, $(".results"));
     renderResult(scan);
     await loadDomains();
     await renderHistory(domain, false);
   } catch (err) {
     $(".results").innerHTML = `<div class="card" style="color:var(--crit)">${esc(err.message)}</div>`;
   }
-  $(".scanning").classList.add("hidden");
   btn.disabled = false;
 }
 
@@ -407,10 +431,8 @@ async function openNetwork() {
 
 async function scanNetwork(cidr, deep, btn) {
   btn.disabled = true;
-  $("#net-view").innerHTML = `<div class="card scanning"><div class="spinner"></div>
-    <span>Scanning ${esc(cidr)} — ${deep ? "this can take a minute or two" : "a few seconds"}. The server window shows Nmap working.</span></div>`;
   try {
-    drawNetwork(await api("POST", "/api/network/scan", { cidr, confirm: true, deep }));
+    drawNetwork(await runLive("/api/network/scan", { cidr, confirm: true, deep, live: true }, $("#net-view")));
   } catch (err) {
     $("#net-view").innerHTML = `<div class="card" style="color:var(--crit)">${esc(err.message)}</div>`;
   }

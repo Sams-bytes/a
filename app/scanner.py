@@ -137,13 +137,17 @@ def builtin_ports(domain: str, timeout: float, log) -> list[dict]:
     return sorted(({**h, "proto": "tcp"} for h in hits if h), key=lambda h: h["port"])
 
 
-def collect_ports(domain: str, timeout: float, log) -> dict:
+def collect_ports(domain: str, timeout: float, log, report=None) -> dict:
     """Nmap when installed (and AEGIS_ENGINE isn't 'builtin'), else the built-in 25-port scan."""
     nmap = nmap_engine.find_nmap() if os.environ.get("AEGIS_ENGINE", "auto") != "builtin" else None
     note = None
+    # Map Nmap's 0-100% into the 10-68% slice that the "ports" phase owns in the live bar.
+    on_prog = None
+    if report:
+        on_prog = lambda task, pct, rem: report(phase=f"Scanning ports — {task}", percent=10 + pct * 0.58)
     if nmap:
         try:
-            return nmap_engine.run(domain, nmap, tcp_names=PORTS, log=log)
+            return nmap_engine.run(domain, nmap, tcp_names=PORTS, log=log, on_progress=on_prog)
         except (nmap_engine.NmapError, ValueError) as e:
             note = f"Nmap failed ({e}); used the built-in engine instead."
             log(note)
@@ -161,10 +165,13 @@ def light_ports(domain: str, timeout: float, provider: str | None) -> dict:
 
 
 def scan(domain: str, timeout: float = 1.5, log=lambda msg: None, matcher=None,
-         mode: str = "full", provider: str | None = None) -> dict:
+         mode: str = "full", provider: str | None = None, report=None) -> dict:
     """matcher: an app.cve.Matcher; when given, detected software is checked for CVEs.
-    mode: 'full' (port scan) or 'light' (website only, for servers you don't solely own)."""
+    mode: 'full' (port scan) or 'light' (website only, for servers you don't solely own).
+    report: optional job callback report(phase=, percent=, line=) for the live view."""
+    rep = report or (lambda **k: None)
     started = datetime.now(timezone.utc)
+    rep(phase=f"Resolving DNS for {domain}", percent=5)
     log(f"Resolving DNS for {domain}")
     ips = resolve(domain)
     result: dict = {"domain": domain, "ips": ips, "open_ports": [], "tls": None, "http": None, "https": None}
@@ -173,16 +180,21 @@ def scan(domain: str, timeout: float = 1.5, log=lambda msg: None, matcher=None,
         result["findings"] = []
         result["score"] = 100
         return result
+    rep(line=f"{domain} resolves to {', '.join(ips)}")
 
     if mode == "light":
+        rep(phase="Light scan: website only (no port scan)", percent=15)
         log(f"Light scan of {domain}: website only, no port scan")
         result.update(light_ports(domain, timeout, provider))
     else:
-        result.update(collect_ports(domain, timeout, log))
+        rep(phase="Scanning ports", percent=10)
+        result.update(collect_ports(domain, timeout, log, report=rep))
         result["mode"] = "full"
     open_set = {p["port"] for p in result["open_ports"] if p.get("proto", "tcp") == "tcp"}
+    rep(percent=72, line=f"{len(result['open_ports'])} open port(s) found")
 
     if 443 in open_set:
+        rep(phase="Checking TLS certificate & web security", percent=80)
         log("Checking TLS certificate")
         result["tls"] = check_tls(domain)
         result["https"] = check_http(domain, https=True)
@@ -191,6 +203,8 @@ def scan(domain: str, timeout: float = 1.5, log=lambda msg: None, matcher=None,
 
     result["software"] = detect(result)
     if matcher and result["software"]:
+        rep(phase="Checking detected software for known vulnerabilities", percent=90,
+            line=f"Software: {', '.join(s['name'] + ' ' + s['version'] for s in result['software'])}")
         log("Checking detected software for known vulnerabilities (CVEs)")
         result["vulns"] = matcher.match(result["software"])
     result["local"] = is_local_scan(result)

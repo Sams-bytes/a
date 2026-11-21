@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import monitor, netmap
+from app import jobs, monitor, netmap
 from app.db import Store
 from app.verification import (InvalidDomain, NotVerified, VerificationService, new_token,
                               normalize_domain, record_value)
@@ -129,7 +129,7 @@ def verify_domain(domain: str):
 
 
 @app.post("/api/domains/{domain}/scan")
-def scan_domain(domain: str):
+def scan_domain(domain: str, live: bool = False):
     try:
         domain = verifier.require_verified(domain)
     except InvalidDomain as e:
@@ -137,7 +137,17 @@ def scan_domain(domain: str):
     except NotVerified:
         raise HTTPException(status_code=403,
                             detail="Domain not verified. Aegis only scans domains you have proven you own.")
+    if live:   # run in the background and let the browser watch via /api/jobs/<id>
+        return {"job_id": jobs.start(lambda report: monitor.run_scan(store, domain, "manual", report=report))}
     return monitor.run_scan(store, domain, "manual")
+
+
+@app.get("/api/jobs/{job_id}")
+def job_status(job_id: str):
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="No such job (it may have expired).")
+    return job
 
 
 @app.patch("/api/domains/{domain}")
@@ -257,6 +267,7 @@ class NetworkScan(BaseModel):
     cidr: str
     confirm: bool = False       # "this network is mine and I'm allowed to scan it"
     deep: bool = False          # also detect open ports + OS (slower; OS needs admin)
+    live: bool = False          # run as a background job the browser can watch
 
 
 @app.get("/api/network/interfaces")
@@ -280,6 +291,8 @@ def network_scan(body: NetworkScan):
         raise HTTPException(status_code=400, detail=(
             "Confirm this is your own network (home or office) that you are allowed to scan. "
             "Scanning someone else's network without permission is illegal."))
+    if body.live:
+        return {"job_id": jobs.start(lambda report: netmap.run(body.cidr, store, deep=body.deep, report=report))}
     try:
         return netmap.run(body.cidr, store, deep=body.deep)
     except netmap.NmapError as e:

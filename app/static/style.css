@@ -146,6 +146,14 @@ table.ports td.b { font-family: var(--mono); font-size: .8rem; color: var(--mute
 .card.hosting { line-height: 1.6; }
 .card.subs table.ports { margin-top: 8px; }
 
+/* live scan progress */
+.card.live { border-left: 4px solid var(--accent); }
+.live-bar { height: 10px; background: var(--bg); border-radius: 99px; overflow: hidden; border: 1px solid var(--line); }
+.live-fill { height: 100%; background: var(--accent); border-radius: 99px; transition: width .4s ease; }
+.live-phase { margin: 10px 0 6px; }
+.live-log { font-family: var(--mono); font-size: .8rem; color: var(--muted); max-height: 150px; overflow: auto; }
+.live-log div { padding: 1px 0; }
+
 /* My network map */
 .navbtn { width: 100%; text-align: left; margin-bottom: 16px; font-weight: 600; }
 .navbtn.active { border-color: var(--accent); color: var(--accent); }

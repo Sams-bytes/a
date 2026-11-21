@@ -45,13 +45,16 @@ UDP_SERVICES = {
     5353: "mDNS (Bonjour)", 11211: "memcached", 51820: "WireGuard VPN",
 }
 
-COMMON = ["-Pn", "-n", "-T4", "--host-timeout", "10m", "-oX", "-"]
+COMMON = ["-Pn", "-n", "-T4", "--host-timeout", "10m", "--stats-every", "2s", "-oX", "-"]
 #  -Pn  don't ping first (many firewalls drop pings, the host would look "down")
 #  -n   don't do reverse-DNS lookups of the IPs
 #  -T4  faster timing, normal for a single host
+#  --stats-every 2s  emit <taskprogress percent=".."> into the XML so we can show live progress
 #  -oX -  write machine-readable XML to the output, which we parse
 
 _SAFE_TARGET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.\-]*$")
+# Nmap's live progress element, e.g. <taskprogress task="Connect Scan" percent="45.87" remaining="5"/>
+TASK_RE = re.compile(r'<taskprogress task="([^"]*)"[^>]*percent="([\d.]+)"[^>]*remaining="(\d+)"')
 _PRIV_WORDS = ("root privileges", "requires root", "administrator", "privileged", "dnet:", "npcap")
 
 
@@ -121,6 +124,29 @@ def parse_xml(xml: str) -> list[dict]:
     return out
 
 
+def _run_streaming(cmd: list[str], on_progress=None) -> tuple[str, str, int]:
+    """Like _run, but read stdout as it arrives and report Nmap's live % via on_progress."""
+    try:
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             text=True, encoding="utf-8", errors="replace", **_no_window())
+    except OSError as e:
+        return "", str(e), -1
+    out = []
+    try:
+        for line in p.stdout:                       # streams line by line until Nmap exits
+            out.append(line)
+            if on_progress:
+                m = TASK_RE.search(line)
+                if m:
+                    on_progress(m.group(1), float(m.group(2)), int(m.group(3)))
+        err = p.stderr.read()
+        p.wait(timeout=900)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        return "".join(out), "nmap timed out", -1
+    return "".join(out), err, p.returncode
+
+
 def _run(cmd: list[str]) -> tuple[str, str, int]:
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -141,13 +167,16 @@ def _software_text(p: dict) -> str:
     return " ".join(x for x in (p["product"], p["version"], f"({p['extrainfo']})" if p["extrainfo"] else "") if x)
 
 
-def run(target: str, nmap: str, tcp_names: dict[int, str] | None = None, log=lambda m: None) -> dict:
-    """Scan one target with Nmap. Returns the same shape as Aegis's built-in scanner, plus extras."""
+def run(target: str, nmap: str, tcp_names: dict[int, str] | None = None, log=lambda m: None,
+        on_progress=None) -> dict:
+    """Scan one target with Nmap. Returns the same shape as Aegis's built-in scanner, plus extras.
+    on_progress(task, percent, remaining) receives Nmap's live progress for the slow scans."""
     tcp_names = tcp_names or {}
     cmds = build_commands(target, nmap)
     log("Nmap: scanning top 1,000 TCP ports + high-risk extras + UDP services")
+    runner = (lambda cmd: _run_streaming(cmd, on_progress)) if on_progress else _run
     with ThreadPoolExecutor(max_workers=3) as pool:
-        results = dict(zip(cmds, pool.map(_run, cmds.values())))
+        results = dict(zip(cmds, pool.map(runner, cmds.values())))
 
     ports: dict[tuple[str, int], dict] = {}
     tcp_ok = False

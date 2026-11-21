@@ -29,7 +29,7 @@ import sys
 import xml.etree.ElementTree as ET
 
 from app.db import Store
-from app.nmap_engine import NmapError, _no_window, _run, find_nmap, nmap_version
+from app.nmap_engine import NmapError, _no_window, _run, _run_streaming, find_nmap, nmap_version
 
 CGNAT = ipaddress.ip_network("100.64.0.0/10")  # carrier-grade NAT / Tailscale - not a LAN we scan
 MAX_PREFIX = 23  # smallest network (= most hosts) we allow: /23 = 512 addresses
@@ -182,7 +182,7 @@ def parse_hosts(xml: str) -> list[dict]:
     return hosts
 
 
-def discover(cidr: str, nmap: str, deep: bool = False, admin: bool = False) -> list[dict]:
+def discover(cidr: str, nmap: str, deep: bool = False, admin: bool = False, on_progress=None) -> list[dict]:
     validate_cidr(cidr)
     sweep, err, rc = _run([nmap, "-sn", "-T4", "-oX", "-", cidr])
     if rc != 0 and not sweep.strip():
@@ -190,10 +190,10 @@ def discover(cidr: str, nmap: str, deep: bool = False, admin: bool = False) -> l
     hosts = {h["ip"]: h for h in parse_hosts(sweep)}
 
     if deep and hosts:
-        cmd = [nmap, "-sT", "--top-ports", "100", "-T4", "-Pn", "--host-timeout", "3m", "-oX", "-"]
+        cmd = [nmap, "-sT", "--top-ports", "100", "-T4", "-Pn", "--host-timeout", "3m", "--stats-every", "2s", "-oX", "-"]
         if admin:
             cmd += ["-O", "--osscan-guess"]   # OS detection needs raw packets = admin rights
-        xml, _, drc = _run([*cmd, *hosts])
+        xml, _, drc = (_run_streaming([*cmd, *hosts], on_progress) if on_progress else _run([*cmd, *hosts]))
         if drc == 0 and xml.strip():
             for d in parse_hosts(xml):
                 if d["ip"] in hosts:
@@ -201,17 +201,21 @@ def discover(cidr: str, nmap: str, deep: bool = False, admin: bool = False) -> l
     return list(hosts.values())
 
 
-def run(cidr: str, store: Store | None = None, deep: bool = False, nmap: str | None = None) -> dict:
+def run(cidr: str, store: Store | None = None, deep: bool = False, nmap: str | None = None, report=None) -> dict:
     nmap = nmap or find_nmap()
     if not nmap:
         raise NmapError("Nmap is not installed")
+    rep = report or (lambda **k: None)
     admin = is_admin()
     net = validate_cidr(cidr)
     gateway = self_ip = None
     for n in local_networks(nmap):
         if n["cidr"] == str(net):
             gateway, self_ip = n["gateway"], n["ip"]
-    hosts = discover(cidr, nmap, deep=deep, admin=admin)
+    rep(phase=f"Discovering devices on {net}", percent=15)
+    on_prog = (lambda task, pct, rem: rep(phase=f"Deep scan — {task}", percent=40 + pct * 0.5)) if report and deep else None
+    hosts = discover(cidr, nmap, deep=deep, admin=admin, on_progress=on_prog)
+    rep(phase="Identifying devices", percent=95, line=f"{len(hosts)} device(s) up")
     devices = []
     for h in sorted(hosts, key=lambda h: ipaddress.ip_address(h["ip"])):
         is_self = h["ip"] == self_ip

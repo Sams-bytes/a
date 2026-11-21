@@ -101,13 +101,13 @@ def run_discovery(store: Store, domain: str, alert: bool = False) -> dict:
     return {**res, "new": new if before else []}
 
 
-def run_scan(store: Store, domain: str, source: str = "manual") -> dict:
+def run_scan(store: Store, domain: str, source: str = "manual", report=None) -> dict:
     """The one place scans happen: scan, compare with last time, save, alert."""
     with _lock_for(domain):
         previous = store.latest_scan(domain)
         started = now()
         mode, provider = decide_mode(store, domain)
-        result = scanner.scan(domain, matcher=cve.Matcher(store), mode=mode, provider=provider)
+        result = scanner.scan(domain, matcher=cve.Matcher(store), mode=mode, provider=provider, report=report)
         changes = compare(previous["result"] if previous else None, result)
         result["changes"] = changes
         scan_id = store.add_scan(domain, started, result, source)
