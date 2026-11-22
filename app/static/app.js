@@ -659,6 +659,62 @@ async function renderCompliance() {
     } catch (err) { alert(err.message); }
   });
 }
+$("#alerts-btn").onclick = openAlerts;
+
+// ---------- Email alerts ----------
+async function openAlerts() {
+  current = null;
+  loadDomains();
+  const detail = $("#detail");
+  detail.innerHTML = `<div class="card"><h1>✉️ Email alerts</h1>
+    <p class="hint">Aegis checks your monitored domains automatically. Turn this on and Aegis will
+      email you the moment it finds a new problem — a new open port, a worse score, a subdomain
+      takeover risk, or monitoring stopping because the ownership record was removed.</p>
+    <div id="alerts-body">Loading…</div></div>`;
+  await renderAlerts();
+}
+
+async function renderAlerts() {
+  const box = $("#alerts-body");
+  if (!box) return;
+  let s;
+  try { s = await api("GET", "/api/alerts/settings"); } catch (e) { box.textContent = e.message; return; }
+  const outboxWarn = s.outbox_ready ? "" :
+    `<p class="legal">⚠️ No outbox is set up on this server yet, so emails can't actually be sent.
+      Ask whoever runs Aegis to add the mail settings to <code>aegis.env</code> (see the README),
+      then restart. You can still save your address below.</p>`;
+  box.innerHTML = `${outboxWarn}
+    <label class="switch"><input type="checkbox" id="al-on" ${s.alerts_enabled ? "checked" : ""}>
+      <b>Send me email alerts</b></label>
+    <p style="margin:12px 0 4px">Send alerts to:</p>
+    <div class="row">
+      <input id="al-email" type="email" placeholder="you@company.nl" value="${esc(s.alert_email || "")}"
+        style="min-width:260px">
+      <button id="al-save">Save</button>
+      <button class="ghost" id="al-test">Send test email</button>
+    </div>
+    <p id="al-msg" class="msg"></p>`;
+  const msg = $("#al-msg");
+  $("#al-save").onclick = async () => {
+    msg.textContent = "Saving…";
+    try {
+      await api("POST", "/api/alerts/settings",
+        { alert_email: $("#al-email").value.trim(), alerts_enabled: $("#al-on").checked });
+      msg.textContent = "Saved.";
+    } catch (e) { msg.textContent = e.message; }
+  };
+  $("#al-on").onchange = $("#al-save").onclick;
+  $("#al-test").onclick = async () => {
+    msg.textContent = "Sending test email…";
+    try {
+      await api("POST", "/api/alerts/settings",
+        { alert_email: $("#al-email").value.trim(), alerts_enabled: $("#al-on").checked });
+      const r = await api("POST", "/api/alerts/test");
+      msg.textContent = `✓ Test email sent to ${r.to}. Check your inbox (and spam folder).`;
+    } catch (e) { msg.textContent = "Could not send: " + e.message; }
+  };
+}
+
 $("#haei-btn").onclick = openHaei;
 $("#cases-btn").onclick = openCases;
 $("#ai-btn").onclick = openAi;

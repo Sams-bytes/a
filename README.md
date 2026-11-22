@@ -170,6 +170,20 @@ compliance conclusion**. "No issues found" means Aegis saw no problem in what it
 can scan from the outside, not that a measure is fully met; organisational
 measures are self-declared.
 
+## Email alerts
+
+Open **✉️ Email alerts**, enter an address and turn alerts on. When the automatic
+weekly check finds something new — a new open port, a worse score, a subdomain
+takeover risk, or monitoring stopping because the ownership record was removed —
+Aegis emails you, so you hear about it without opening the dashboard. A **Send
+test email** button confirms delivery straight away.
+
+Setup (one-time, by whoever runs Aegis): copy `aegis.env.example` to `aegis.env`
+and fill in one mail account to send through (a free Brevo SMTP account works).
+`aegis.env` is gitignored, so the password never enters git. Each customer still
+chooses their own destination address in the dashboard. Built on Python's standard
+library — no extra dependency, still double-click to run.
+
 ## AI security analyst (opt-in, guarded)
 
 Open **🤖 AI analyst** for a plain-English **executive summary** of your posture
@@ -274,6 +288,7 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 | `app/main.py` (cases) | Incident-response cases: timeline, notes, approval-gated response actions |
 | `app/ai.py` | AI analyst (provider-agnostic, opt-in): posture summary + Q&A, with guardrails |
 | `app/compliance.py` | NIS2 Article 21(2) + GDPR readiness: scan evidence + self-assessment + report |
+| `app/notify.py` | Email alerts (stdlib SMTP); outbox from gitignored `aegis.env`, destination per org |
 | `app/verification.py` | Proves domain ownership via a DNS TXT token |
 | `app/scanner.py` | Resolves DNS, scans ports (Nmap or built-in), checks TLS and web headers |
 | `app/traffic.py` | Live view of this computer's connections to the internet, by app and owner |
@@ -291,7 +306,7 @@ says so when it sees Ubuntu/Debian/RHEL in a banner. Aegis never tries an attack
 | `app/db.py` | Saves domains, scan history and alerts in SQLite (`aegis.db`), with small migrations |
 | `app/static/` | The dashboard (HTML/CSS/JS) |
 | `tools/fake_service.py` | Opens a fake service on a local port (optionally with a banner), for demos |
-| `tests/` | 178 tests, including a real scan of a fake FTP server on localhost |
+| `tests/` | 188 tests, including a real scan of a fake FTP server on localhost |
 
 ## Roadmap
 

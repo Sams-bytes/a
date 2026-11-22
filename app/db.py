@@ -147,6 +147,12 @@ CREATE TABLE IF NOT EXISTS finding_status (  -- remediation workflow: the state 
     updated_at  TEXT NOT NULL,
     PRIMARY KEY (org_id, domain, finding_key)
 );
+CREATE TABLE IF NOT EXISTS org_settings (   -- per-org preferences (where alert emails go)
+    org_id         INTEGER PRIMARY KEY,
+    alert_email    TEXT,                   -- where to send alert emails (None = not set)
+    alerts_enabled INTEGER NOT NULL DEFAULT 0,
+    updated_at     TEXT
+);
 CREATE TABLE IF NOT EXISTS audit_events (   -- who did what, when: a tamper-evident trail per org
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     org_id      INTEGER NOT NULL,
@@ -703,6 +709,28 @@ class Store:
                                (project_id, domain, org_id))
             self._conn.commit()
 
+    # ---- per-org settings (alert email) --------------------------------
+    def get_org_settings(self, org_id: int = DEFAULT_ORG) -> dict:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT alert_email, alerts_enabled FROM org_settings WHERE org_id=?", (org_id,)).fetchone()
+        if not row:
+            return {"alert_email": None, "alerts_enabled": False}
+        return {"alert_email": row["alert_email"], "alerts_enabled": bool(row["alerts_enabled"])}
+
+    def set_org_settings(self, alert_email: str | None = None, alerts_enabled: bool | None = None,
+                         org_id: int = DEFAULT_ORG) -> dict:
+        """Update only the fields passed (None = leave as it was)."""
+        cur = self.get_org_settings(org_id)
+        email = cur["alert_email"] if alert_email is None else (alert_email.strip() or None)
+        enabled = cur["alerts_enabled"] if alerts_enabled is None else bool(alerts_enabled)
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO org_settings(org_id, alert_email, alerts_enabled, updated_at) VALUES (?,?,?,?)",
+                (org_id, email, 1 if enabled else 0, now()))
+            self._conn.commit()
+        return self.get_org_settings(org_id)
+
     # ---- audit log -----------------------------------------------------
     def add_audit(self, org_id: int, user_id: int | None, action: str,
                   target: str | None = None, detail: str | None = None) -> None:
@@ -745,6 +773,7 @@ class OrgStore:
         "create_case", "list_cases", "get_case", "add_case_event", "set_case_status",
         "add_action", "decide_action",
         "set_compliance_answer", "compliance_answers",
+        "get_org_settings", "set_org_settings",
     }
 
     def __init__(self, store: Store, org_id: int):

@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import ai, compliance, haei, jobs, monitor, netmap, report, risk, traffic
+from app import ai, compliance, haei, jobs, monitor, netmap, notify, report, risk, traffic
 from app.accounts import SESSION_COOKIE, Accounts, AuthError
 from app.db import OrgStore, Store
 from app.verification import (InvalidDomain, NotVerified, VerificationService, lookup_txt,
@@ -149,6 +149,11 @@ class ComplianceAnswerIn(BaseModel):
     measure_id: str
     question_id: str
     answer: str                     # yes | no | na
+
+
+class AlertSettingsIn(BaseModel):
+    alert_email: str | None = None      # where alert emails go ("" clears it)
+    alerts_enabled: bool | None = None  # master on/off switch
 
 
 CASE_STATUSES = ("open", "investigating", "contained", "closed")
@@ -425,6 +430,46 @@ def compliance_answer(body: ComplianceAnswerIn, ctx: Ctx = Depends(get_ctx)):
 def compliance_report(ctx: Ctx = Depends(get_ctx)):
     ctx.audit("compliance_report")
     return report.render_compliance(ctx.org_name, _assess(ctx))
+
+
+# ---- email alerts ----------------------------------------------------------
+def _alerts_payload(ctx: Ctx) -> dict:
+    s = ctx.store.get_org_settings()
+    # `outbox_ready` tells the UI whether the operator has configured an SMTP
+    # outbox at all - without one, no email can be sent no matter the settings.
+    return {"alert_email": s["alert_email"], "alerts_enabled": s["alerts_enabled"],
+            "outbox_ready": notify.configured()}
+
+
+@app.get("/api/alerts/settings")
+def alerts_settings(ctx: Ctx = Depends(get_ctx)):
+    return _alerts_payload(ctx)
+
+
+@app.post("/api/alerts/settings")
+def alerts_settings_save(body: AlertSettingsIn, ctx: Ctx = Depends(get_ctx)):
+    email = body.alert_email
+    if email is not None:
+        email = email.strip()
+        if email and "@" not in email:
+            raise HTTPException(status_code=422, detail="That does not look like an email address.")
+    ctx.store.set_org_settings(alert_email=email, alerts_enabled=body.alerts_enabled)
+    ctx.audit("alert_settings", ctx.store.get_org_settings()["alert_email"],
+              "on" if ctx.store.get_org_settings()["alerts_enabled"] else "off")
+    return _alerts_payload(ctx)
+
+
+@app.post("/api/alerts/test")
+def alerts_test(ctx: Ctx = Depends(get_ctx)):
+    to = ctx.store.get_org_settings()["alert_email"]
+    if not to:
+        raise HTTPException(status_code=422, detail="Add an email address first, then send a test.")
+    try:
+        notify.send_test(to)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    ctx.audit("alert_test", to)
+    return {"sent": True, "to": to}
 
 
 # ---- AI security analyst (opt-in, guarded) --------------------------------

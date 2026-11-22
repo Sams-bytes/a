@@ -27,7 +27,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
-from app import cve, hosting, scanner, subdomains
+from app import cve, hosting, notify, scanner, subdomains
 from app.changes import compare, describe, is_bad
 from app.db import OrgStore, Store, now
 from app.verification import DNSUnavailable, VerificationService
@@ -56,6 +56,27 @@ _locks_guard = threading.Lock()
 def _lock_for(domain: str) -> threading.Lock:
     with _locks_guard:
         return _locks.setdefault(domain, threading.Lock())
+
+
+def email_alert(store: Store, domain: str, level: str, title: str, lines: list[str]) -> None:
+    """Email this alert to the org's address, if the org turned alerts on and gave one.
+
+    `store` is already scoped to one org (an OrgStore), so we only ever read that
+    org's settings - no cross-tenant leak. A mail problem is logged, never raised:
+    a broken outbox must not stop monitoring from running.
+    """
+    try:
+        settings = store.get_org_settings()
+    except Exception:
+        return
+    to = settings.get("alert_email")
+    if not settings.get("alerts_enabled") or not to:
+        return
+    try:
+        notify.send_alert(to, domain, level, title, lines)
+        log(f"{domain}: alert emailed to {to}")
+    except Exception as e:
+        log(f"{domain}: alert email failed: {e!r}")
 
 
 # Indirections so tests can swap in fakes without touching the real modules.
@@ -97,7 +118,9 @@ def run_discovery(store: Store, domain: str, alert: bool = False) -> dict:
     lines = [f"New subdomain appeared: {n}" for n in new] if before else []
     lines += [f"Subdomain takeover risk: {n} points to a service that no longer exists" for n in new_takeovers]
     if alert and lines:
-        store.add_alert(domain, "warning", f"Subdomain changes on {domain}", lines)
+        title = f"Subdomain changes on {domain}"
+        store.add_alert(domain, "warning", title, lines)
+        email_alert(store, domain, "warning", title, lines)
     return {**res, "new": new if before else []}
 
 
@@ -114,8 +137,9 @@ def run_scan(store: Store, domain: str, source: str = "manual", report=None) -> 
         # Manual scans: you're looking at the screen already. Automatic scans
         # happen while nobody watches, so bad changes become an alert.
         if source == "scheduled" and is_bad(changes):
-            store.add_alert(domain, "warning", f"Something changed on {domain}",
-                            describe(changes), scan_id)
+            title, lines = f"Something changed on {domain}", describe(changes)
+            store.add_alert(domain, "warning", title, lines, scan_id)
+            email_alert(store, domain, "warning", title, lines)
         return store.get_scan(scan_id)
 
 
@@ -153,11 +177,13 @@ def run_due(store: Store, verifier: VerificationService, interval: timedelta,
         if not still_owned:
             log(f"{domain}: ownership record is gone - monitoring stopped, NOT scanning")
             store.mark_unverified(domain)
-            store.add_alert(domain, "stopped", f"Monitoring stopped for {domain}", [
+            stopped_lines = [
                 "The DNS TXT record that proves ownership (aegis-verify=...) is no longer there.",
                 "Aegis only scans domains with proven ownership, so automatic scans have stopped.",
                 "If you still own this domain, add the record again and press Check verification.",
-            ])
+            ]
+            store.add_alert(domain, "stopped", f"Monitoring stopped for {domain}", stopped_lines)
+            email_alert(store, domain, "stopped", f"Monitoring stopped for {domain}", stopped_lines)
             report.append({"domain": domain, "status": "stopped"})
             continue
         log(f"{domain}: scanning")
