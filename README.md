@@ -6,8 +6,7 @@ Attack-surface monitoring for EU small businesses (NIS2 / GDPR focused).
 ## Run it on Windows (no terminal needed)
 
 1. Install Python once: open PowerShell and run `winget install Python.Python.3.12`
-2. Download this project: `git clone https://github.com/Sams-bytes/a.git` then
-   `git checkout claude/inspiring-hamilton-jxo3nx` inside the `a` folder
+2. Download this project: `git clone https://github.com/Sams-bytes/a.git`
    (or on GitHub: Code -> Download ZIP, and unzip it).
 3. **Double-click `start.bat`.** The first run sets everything up (about a minute),
    then your browser opens http://127.0.0.1:8000 with the Aegis dashboard.
