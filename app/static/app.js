@@ -32,7 +32,7 @@ function insertProjectBar(root, d) {
   bar.className = "card projbar";
   bar.innerHTML = `<label><b>Project:</b> <select class="proj-select">${opts}</select></label>
     <span class="hint">Group this domain under an engagement with a written authorisation.
-    Manage projects in the <b>🗂 Projects</b> view.</span>`;
+    Manage projects in the <b>Projects</b> view.</span>`;
   const anchor = root.querySelector(".head") || root.firstElementChild;
   anchor ? anchor.after(bar) : root.prepend(bar);
   bar.querySelector(".proj-select").onchange = async (e) => {
@@ -122,7 +122,7 @@ async function renderVerified(root, d) {
   if (d.last_score != null) {
     const btn = document.createElement("button");
     btn.className = "ghost small";
-    btn.textContent = "📄 Report";
+    btn.textContent = "Report";
     btn.title = "Open a printable client report (Print → Save as PDF)";
     btn.onclick = () => window.open(`/report/${encodeURIComponent(d.domain)}`, "_blank");
     $(".scan", root).after(btn);
@@ -254,7 +254,7 @@ async function loadAlerts() {
   const unseen = alerts.filter((a) => !a.seen_at);
   const box = $("#alerts");
   if (!unseen.length) { box.innerHTML = ""; return; }
-  box.innerHTML = `<h2>🔔 ${unseen.length} new alert${unseen.length > 1 ? "s" : ""}</h2>
+  box.innerHTML = `<h2>${unseen.length} new alert${unseen.length > 1 ? "s" : ""}</h2>
     ${unseen.map((a) => `
       <div class="alert ${a.level}" data-d="${esc(a.domain)}" data-scan="${a.scan_id ?? ""}">
         <b>${esc(a.title)}</b>
@@ -424,20 +424,20 @@ function renderNse(nse) {
     const out = (c.output || "").trim();
     if (c.id === "ssl-enum-ciphers") {
       const g = (out.match(/least strength:\s*([A-F])/) || [])[1];
-      return `<div class="card nse"><div class="nse-head">🔒 HTTPS encryption (port ${c.port})
+      return `<div class="card nse"><div class="nse-head">HTTPS encryption (port ${c.port})
         ${g ? `<span class="grade ${GRADE_CLASS[g] || ""}">Grade ${g}</span>` : ""}</div>
         <details><summary>Details</summary><pre>${esc(out)}</pre></details></div>`;
     }
     if (c.id.startsWith("smb")) {
       const bad = /nt lm 0\.12|smbv1/i.test(out) || /not required/i.test(out);
-      return `<div class="card nse"><div class="nse-head">🗂️ SMB (port ${c.port})
+      return `<div class="card nse"><div class="nse-head">SMB (port ${c.port})
         <span class="grade ${bad ? "high" : "good"}">${bad ? "check" : "ok"}</span></div>
         <pre>${esc(out)}</pre></div>`;
     }
-    if (c.id === "http-title") return `<div class="card nse"><div class="nse-head">🌐 Page title</div><pre>${esc(out)}</pre></div>`;
+    if (c.id === "http-title") return `<div class="card nse"><div class="nse-head">Page title</div><pre>${esc(out)}</pre></div>`;
     if (c.id === "ssh2-enum-algos") {
       const bad = /sha1|-cbc|hmac-md5|3des|group1/i.test(out);
-      return `<div class="card nse"><div class="nse-head">🔑 SSH algorithms (port ${c.port})
+      return `<div class="card nse"><div class="nse-head">SSH algorithms (port ${c.port})
         <span class="grade ${bad ? "medium" : "good"}">${bad ? "weak found" : "ok"}</span></div>
         <details><summary>Details</summary><pre>${esc(out)}</pre></details></div>`;
     }
@@ -455,10 +455,10 @@ async function removeDomain(domain) {
 
 // ================= My network map =================
 const DEVICE = {
-  router: { icon: "📶", label: "Router / gateway" }, computer: { icon: "💻", label: "Computer" },
-  phone: { icon: "📱", label: "Phone / tablet" }, printer: { icon: "🖨️", label: "Printer" },
-  tv: { icon: "📺", label: "TV / media" }, iot: { icon: "💡", label: "Smart device (IoT)" },
-  unknown: { icon: "❓", label: "Unknown device" },
+  router: { icon: "", label: "Router / gateway" }, computer: { icon: "", label: "Computer" },
+  phone: { icon: "", label: "Phone / tablet" }, printer: { icon: "", label: "Printer" },
+  tv: { icon: "", label: "TV / media" }, iot: { icon: "", label: "Smart device (IoT)" },
+  unknown: { icon: "", label: "Unknown device" },
 };
 
 async function openNetwork() {
@@ -531,14 +531,14 @@ function drawNetwork(r) {
   });
   const svg = `<svg viewBox="0 0 ${W} ${H}" class="netmap" role="img" aria-label="network map">
     ${spokes.map((s) => s.line).join("")}
-    ${router ? node(router, cx, cy) : `<g transform="translate(${cx},${cy})"><circle r="26" class="dev-bg"/><text class="ico" y="9" text-anchor="middle">🌐</text><text class="lbl" y="44" text-anchor="middle">internet</text></g>`}
+    ${router ? node(router, cx, cy) : `<g transform="translate(${cx},${cy})"><circle r="26" class="dev-bg"/><text class="lbl" y="44" text-anchor="middle">internet</text></g>`}
     ${spokes.map((s) => node(s.d, s.x, s.y)).join("")}
   </svg>`;
 
   const newOnes = devices.filter((d) => d.is_new);
   $("#net-view").innerHTML = `
     ${newOnes.length ? `<div class="card local-note" style="border-left-color:var(--crit)">
-      <b>⚠ ${newOnes.length} device${newOnes.length > 1 ? "s" : ""} not seen before:</b>
+      <b>${newOnes.length} device${newOnes.length > 1 ? "s" : ""} not seen before:</b>
       ${newOnes.map((d) => esc(d.hostname || d.ip)).join(", ")}. If you don't recognise ${newOnes.length > 1 ? "them" : "it"},
       someone may be on your network — change your Wi-Fi password.</div>` : ""}
     <div class="card">
@@ -559,7 +559,7 @@ function drawNetwork(r) {
   const show = (ip) => {
     const d = devices.find((x) => x.ip === ip); if (!d) return;
     const m = DEVICE[d.type] || DEVICE.unknown;
-    $(".net-detail").innerHTML = `<b>${m.icon} ${esc(d.hostname || d.ip)}</b> — ${m.label}<br>
+    $(".net-detail").innerHTML = `<b>${esc(d.hostname || d.ip)}</b> — ${m.label}<br>
       IP ${esc(d.ip)}${d.mac ? ` · MAC ${esc(d.mac)}` : ""}${d.vendor ? ` · ${esc(d.vendor)}` : ""}
       ${d.randomized_mac ? `<br><span class="hint">Uses a random MAC address (a privacy feature of phones), so the maker is hidden.</span>` : ""}
       ${d.os ? `<br>OS guess: ${esc(d.os)}` : ""}
@@ -615,7 +615,7 @@ async function openCompliance() {
   current = null;
   loadDomains();
   const detail = $("#detail");
-  detail.innerHTML = `<div class="card"><h1>✅ NIS2 / GDPR readiness</h1>
+  detail.innerHTML = `<div class="card"><h1>NIS2 / GDPR readiness</h1>
     <p class="hint">The ten NIS2 Article 21(2) security measures. Aegis fills in what it can see from your scans;
     you answer the organisational parts. The result is a readiness report you can hand an auditor or insurer.
     <b>This is a readiness aid, not a certification or legal conclusion.</b></p>
@@ -636,7 +636,7 @@ async function renderCompliance() {
     ${m.scanned ? `<div class="hint">What Aegis sees: ${m.findings.length
       ? m.findings.map((f) => `<span class="mini-f">${esc(f.title)} <i>(${esc(f.severity)}, ${esc(f.domain || "")})</i></span>`).join(" ")
       : "no issues found in what can be scanned."}</div>` : ""}
-    ${m.capability_in_use ? `<div class="hint">✓ You are using Aegis's ${esc(m.capability)} capability here.</div>` : ""}
+    ${m.capability_in_use ? `<div class="hint">You are using Aegis's ${esc(m.capability)} capability here.</div>` : ""}
     <div class="questions">${m.questions.map((q) => `<div class="q">
       <span>${esc(q.text)}</span>
       <select class="c-ans" data-m="${m.id}" data-q="${q.id}">
@@ -646,7 +646,7 @@ async function renderCompliance() {
   box.innerHTML = `<div class="comp-score">
       <span class="big" style="color:${data.score >= 80 ? "var(--good)" : data.score >= 50 ? "var(--med)" : "var(--high)"}">${data.score}%</span>
       <span>of the 10 NIS2 measures assessed as met (${data.met}/${data.total})
-        &nbsp;<button class="ghost small" id="comp-report">📄 Download readiness report</button></span>
+        &nbsp;<button class="ghost small" id="comp-report">Download readiness report</button></span>
     </div>
     ${data.measures.map(measure).join("")}
     <p class="hint" style="margin-top:10px">${esc(data.gdpr_note)}</p>`;
@@ -666,7 +666,7 @@ async function openAlerts() {
   current = null;
   loadDomains();
   const detail = $("#detail");
-  detail.innerHTML = `<div class="card"><h1>✉️ Email alerts</h1>
+  detail.innerHTML = `<div class="card"><h1>Email alerts</h1>
     <p class="hint">Aegis checks your monitored domains automatically. Turn this on and Aegis will
       email you the moment it finds a new problem — a new open port, a worse score, a subdomain
       takeover risk, or monitoring stopping because the ownership record was removed.</p>
@@ -680,7 +680,7 @@ async function renderAlerts() {
   let s;
   try { s = await api("GET", "/api/alerts/settings"); } catch (e) { box.textContent = e.message; return; }
   const outboxWarn = s.outbox_ready ? "" :
-    `<p class="legal">⚠️ No outbox is set up on this server yet, so emails can't actually be sent.
+    `<p class="legal">No outbox is set up on this server yet, so emails can't actually be sent.
       Ask whoever runs Aegis to add the mail settings to <code>aegis.env</code> (see the README),
       then restart. You can still save your address below.</p>`;
   box.innerHTML = `${outboxWarn}
@@ -710,7 +710,7 @@ async function renderAlerts() {
       await api("POST", "/api/alerts/settings",
         { alert_email: $("#al-email").value.trim(), alerts_enabled: $("#al-on").checked });
       const r = await api("POST", "/api/alerts/test");
-      msg.textContent = `✓ Test email sent to ${r.to}. Check your inbox (and spam folder).`;
+      msg.textContent = `Test email sent to ${r.to}. Check your inbox (and spam folder).`;
     } catch (e) { msg.textContent = "Could not send: " + e.message; }
   };
 }
@@ -727,11 +727,11 @@ async function openAi() {
   let st;
   try { st = await api("GET", "/api/ai/status"); } catch (e) { detail.innerHTML = `<div class="card">${esc(e.message)}</div>`; return; }
   const banner = st.enabled
-    ? `<div class="ai-on">🤖 AI analyst is <b>on</b> (${esc(st.provider)} · ${esc(st.model)}). When you ask, your
+    ? `<div class="ai-on">AI analyst is <b>on</b> (${esc(st.provider)} · ${esc(st.model)}). When you ask, your
         findings (not your account details) are sent to ${esc(st.provider)} to generate the answer.</div>`
     : `<div class="ai-off">AI analyst is <b>off</b> — no API key set, so you'll get a fast rule-based summary.
         To enable richer summaries and Q&A, set <code>ANTHROPIC_API_KEY</code> and restart Aegis.</div>`;
-  detail.innerHTML = `<div class="card"><h1>🤖 AI security analyst</h1>
+  detail.innerHTML = `<div class="card"><h1>AI security analyst</h1>
     ${banner}
     <p class="hint">It reads only <b>your own</b> findings. It can explain and prioritise, but it cannot change
     anything — any action it suggests still goes through the approved incident workflow, and every query is
@@ -768,7 +768,7 @@ async function openCases() {
   current = null;
   loadDomains();
   const detail = $("#detail");
-  detail.innerHTML = `<div class="card"><h1>🚨 Incident response</h1>
+  detail.innerHTML = `<div class="card"><h1>Incident response</h1>
     <p class="hint">Turn a finding or alert into a tracked case: investigate, keep a timeline, and propose
     response actions that an admin must approve before they are carried out. Aegis records the decisions —
     it does not reach into your systems to execute them.</p>
@@ -827,7 +827,7 @@ async function openCase(id) {
   };
 
   detail.innerHTML = `<div class="card">
-    <button class="ghost small" id="case-back">← All cases</button>
+    <button class="ghost small" id="case-back">Back to all cases</button>
     <h1>#${c.id} ${esc(c.title)}</h1>
     <p><span class="sev ${c.severity}">${esc(c.severity)}</span> &nbsp; Status:
       <select id="case-status">${statusSel}</select>
@@ -854,7 +854,7 @@ async function openHaei() {
   current = null;
   loadDomains();
   const detail = $("#detail");
-  detail.innerHTML = `<div class="card"><h1>🕵️ Attack intelligence</h1>
+  detail.innerHTML = `<div class="card"><h1>Attack intelligence</h1>
     <p class="hint">How does your exposure compare to <b>how real breaches actually began</b>? Aegis tags each
     documented incident with the entry condition attackers used, and checks whether you share it.
     <b>Sharing an entry condition is not proof you're vulnerable</b> — it's a prompt to apply the control
@@ -879,7 +879,7 @@ async function openHaei() {
   const matches = data.matches.length
     ? `<h2>Your exposure resembles ${data.matches.length} documented attack${data.matches.length > 1 ? "s" : ""}</h2>
        ${data.matches.map(matchCard).join("")}`
-    : `<div class="card"><p>✅ None of your <b>current</b> findings match the entry condition of a known
+    : `<div class="card"><p>None of your <b>current</b> findings match the entry condition of a known
         breach in our library. Keep it that way — and remember this only covers what's externally visible.</p></div>`;
 
   const libRows = lib.map((i) => `<tr>
@@ -898,7 +898,7 @@ async function openFindings() {
   current = null;
   loadDomains();
   const detail = $("#detail");
-  detail.innerHTML = `<div class="card"><h1>⚠️ Findings — risk worklist</h1>
+  detail.innerHTML = `<div class="card"><h1>Findings — risk worklist</h1>
     <p class="hint">Every real finding across all your domains, ordered by <b>risk = how bad × how likely</b>
     (CVSS impact combined with EPSS/KEV likelihood). Fix top-down. Mark each one as you deal with it.</p>
     <div id="findings-body">Loading…</div></div>`;
@@ -952,7 +952,7 @@ async function openProjects() {
   loadDomains();
   await loadProjects();
   const detail = $("#detail");
-  detail.innerHTML = `<div class="card"><h1>🗂 Projects</h1>
+  detail.innerHTML = `<div class="card"><h1>Projects</h1>
     <p class="hint">An engagement folder for the domains you assess for one client, with a record of
     who authorised it. DNS ownership proves you <i>can</i> scan; the authorisation records that you were
     <i>asked</i> to — the paperwork a real security assessment needs.</p>
@@ -993,7 +993,7 @@ async function openAudit() {
   current = null;
   loadDomains();
   const detail = $("#detail");
-  detail.innerHTML = `<div class="card"><h1>📜 Audit log</h1>
+  detail.innerHTML = `<div class="card"><h1>Audit log</h1>
     <p class="hint">Every important action in your organisation, newest first. This is the kind of
     tamper-evident trail NIS2 and auditors expect.</p><div id="audit-body">Loading…</div></div>`;
   try {

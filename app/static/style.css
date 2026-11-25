@@ -142,7 +142,7 @@ table.ports td.b { font-family: var(--mono); font-size: .8rem; color: var(--mute
   border-radius: 99px; padding: 1px 8px; margin-left: 6px; }
 
 .domains li.child { margin-left: 18px; font-size: .92rem; }
-.domains li.child .name::before { content: "↳ "; color: var(--muted); }
+.domains li.child .name::before { content: ""; }
 .card.hosting { line-height: 1.6; }
 .card.subs table.ports { margin-top: 8px; }
 
